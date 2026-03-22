@@ -1,7 +1,7 @@
-import { type User, type InsertUser, users } from "@shared/schema";
+import { type Audit, type InsertAudit, audits } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
-import { eq } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 
 const sqlite = new Database("data.db");
 sqlite.pragma("journal_mode = WAL");
@@ -9,22 +9,33 @@ sqlite.pragma("journal_mode = WAL");
 export const db = drizzle(sqlite);
 
 export interface IStorage {
-  getUser(id: number): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createAudit(audit: InsertAudit): Promise<Audit>;
+  getAudit(id: number): Promise<Audit | undefined>;
+  getAuditsByBrand(brandName: string): Promise<Audit[]>;
+  getRecentAudits(limit?: number): Promise<Audit[]>;
 }
 
 export class DatabaseStorage implements IStorage {
-  async getUser(id: number): Promise<User | undefined> {
-    return db.select().from(users).where(eq(users.id, id)).get();
+  async createAudit(audit: InsertAudit): Promise<Audit> {
+    return db.insert(audits).values(audit).returning().get();
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return db.select().from(users).where(eq(users.username, username)).get();
+  async getAudit(id: number): Promise<Audit | undefined> {
+    return db.select().from(audits).where(eq(audits.id, id)).get();
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    return db.insert(users).values(insertUser).returning().get();
+  async getAuditsByBrand(brandName: string): Promise<Audit[]> {
+    return db.select().from(audits)
+      .where(eq(audits.brandName, brandName))
+      .orderBy(desc(audits.createdAt))
+      .all();
+  }
+
+  async getRecentAudits(limit: number = 20): Promise<Audit[]> {
+    return db.select().from(audits)
+      .orderBy(desc(audits.createdAt))
+      .limit(limit)
+      .all();
   }
 }
 

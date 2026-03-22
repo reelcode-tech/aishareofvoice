@@ -2,6 +2,9 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
+// Default to dark mode (our primary design)
+document.documentElement.classList.add("dark");
+
 if (!window.location.hash) {
   window.location.hash = "#/";
 }

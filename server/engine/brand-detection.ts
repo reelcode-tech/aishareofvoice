@@ -1,0 +1,168 @@
+// Known domain → brand mappings for bot-protected and JS-rendered sites
+const KNOWN_DOMAIN_BRANDS: Record<string, { brand: string; category: string }> = {
+  "zara.com": { brand: "Zara", category: "fashion" },
+  "nike.com": { brand: "Nike", category: "sneakers" },
+  "apple.com": { brand: "Apple", category: "electronics" },
+  "google.com": { brand: "Google", category: "technology" },
+  "amazon.com": { brand: "Amazon", category: "ecommerce" },
+  "sephora.com": { brand: "Sephora", category: "beauty" },
+  "dyson.com": { brand: "Dyson", category: "home appliances" },
+  "saatva.com": { brand: "Saatva", category: "mattresses" },
+  "casper.com": { brand: "Casper", category: "mattresses" },
+  "purple.com": { brand: "Purple", category: "mattresses" },
+  "cerave.com": { brand: "CeraVe", category: "skincare" },
+  "theordinary.com": { brand: "The Ordinary", category: "skincare" },
+  "versed.com": { brand: "Versed", category: "skincare" },
+  "versedskin.com": { brand: "Versed", category: "skincare" },
+  "lamer.com": { brand: "La Mer", category: "luxury skincare" },
+  "hubspot.com": { brand: "HubSpot", category: "CRM software" },
+  "salesforce.com": { brand: "Salesforce", category: "CRM software" },
+  "pipedrive.com": { brand: "Pipedrive", category: "CRM software" },
+  "claires.com": { brand: "Claire's", category: "jewelry" },
+  "pandora.net": { brand: "Pandora", category: "jewelry" },
+  "tiffany.com": { brand: "Tiffany & Co.", category: "jewelry" },
+  "mejuri.com": { brand: "Mejuri", category: "jewelry" },
+  "liatbenzur.com": { brand: "LBZ Advisory", category: "consulting" },
+  "glossier.com": { brand: "Glossier", category: "beauty" },
+  "drunk-elephant.com": { brand: "Drunk Elephant", category: "skincare" },
+  "paulaschoice.com": { brand: "Paula's Choice", category: "skincare" },
+  "theinkeylist.com": { brand: "The Inkey List", category: "skincare" },
+  "skinceuticals.com": { brand: "SkinCeuticals", category: "skincare" },
+  "laroche-posay.us": { brand: "La Roche-Posay", category: "skincare" },
+  "herbivore.com": { brand: "Herbivore Botanicals", category: "skincare" },
+  "youthtothepeople.com": { brand: "Youth To The People", category: "skincare" },
+  "osea.com": { brand: "OSEA", category: "skincare" },
+  "narscosmetics.com": { brand: "NARS", category: "beauty" },
+  "dove.com": { brand: "Dove", category: "personal care" },
+  "olay.com": { brand: "Olay", category: "skincare" },
+  "tempurpedic.com": { brand: "Tempur-Pedic", category: "mattresses" },
+  "tuftandneedle.com": { brand: "Tuft & Needle", category: "mattresses" },
+  "linenspa.com": { brand: "Linenspa", category: "mattresses" },
+  "zoho.com": { brand: "Zoho", category: "CRM software" },
+  "monday.com": { brand: "Monday.com", category: "project management" },
+  "slack.com": { brand: "Slack", category: "communication" },
+  "notion.so": { brand: "Notion", category: "productivity" },
+};
+
+// Brand alias resolution for truncated names from AI responses
+const BRAND_ALIASES: Record<string, string> = {
+  "cerave": "CeraVe",
+  "la roche": "La Roche-Posay",
+  "la roche-pos": "La Roche-Posay",
+  "the ordinary": "The Ordinary",
+  "the ord": "The Ordinary",
+  "drunk elephant": "Drunk Elephant",
+  "drunk ele": "Drunk Elephant",
+  "paula": "Paula's Choice",
+  "paula's": "Paula's Choice",
+  "the in": "The Inkey List",
+  "the inkey": "The Inkey List",
+  "skince": "SkinCeuticals",
+  "skinceut": "SkinCeuticals",
+  "herbivore": "Herbivore Botanicals",
+  "youth to": "Youth To The People",
+  "tuft": "Tuft & Needle",
+  "tuft &": "Tuft & Needle",
+  "lin": "Linenspa",
+  "tempur": "Tempur-Pedic",
+  "tempur-ped": "Tempur-Pedic",
+  "pedic tempur": "Tempur-Pedic",
+  "pedic": "Tempur-Pedic",
+  "tiffany": "Tiffany & Co.",
+  "piped": "Pipedrive",
+  "herb": "Herbivore Botanicals",
+};
+
+// Noise words that should NOT be extracted as brand names
+const NOISE_WORDS = new Set([
+  "popular", "affordable", "expensive", "cruelty", "polarizing", "premium",
+  "luxury", "professional", "advanced", "natural", "organic", "clean",
+  "gentle", "effective", "powerful", "innovative", "sustainable", "ethical",
+  "clinical", "dermatologist", "recommended", "trusted", "leading", "best",
+  "top", "quality", "high", "low", "good", "great", "amazing", "excellent",
+  "mixed", "mostly", "widely", "generally", "particularly", "especially",
+  "however", "although", "furthermore", "additionally", "important",
+]);
+
+const NOISE_PHRASES = [
+  "mixed reviews", "widely used", "mostly positive", "quality testing",
+  "cruelty-free", "board certified", "dermatologist recommended",
+  "clinically proven", "all natural", "clean beauty",
+];
+
+export function normalizeBrandName(raw: string): string | null {
+  let name = raw.trim();
+  
+  // Strip HTML entities
+  name = name.replace(/&nbsp;/gi, "").replace(/&amp;/gi, "&").trim();
+  
+  // Strip trailing hyphens, parens, quotes
+  name = name.replace(/[-–—'"()]+$/, "").trim();
+  
+  // Strip leading/trailing quotes
+  name = name.replace(/^["']+|["']+$/g, "").trim();
+  
+  // Strip .com and regional suffixes
+  name = name.replace(/\.(com|net|org|co|io|ai|us|uk)$/i, "").trim();
+  name = name.replace(/\s+(US|UK|EU|Global|Home)\s*[-–]?\s*$/i, "").trim();
+  name = name.replace(/^Home\s*[-–]\s*/i, "").trim();
+  
+  if (!name || name.length < 2) return null;
+  
+  // Check noise words
+  if (NOISE_WORDS.has(name.toLowerCase())) return null;
+  
+  // Check noise phrases
+  for (const phrase of NOISE_PHRASES) {
+    if (name.toLowerCase().includes(phrase)) return null;
+  }
+  
+  // Check aliases (exact match first)
+  const lower = name.toLowerCase();
+  if (BRAND_ALIASES[lower]) return BRAND_ALIASES[lower];
+  
+  // Prefix matching: if 4+ chars and is a prefix of any alias key
+  if (name.length >= 4) {
+    for (const [key, canonical] of Object.entries(BRAND_ALIASES)) {
+      if (key.startsWith(lower) || lower.startsWith(key)) {
+        return canonical;
+      }
+    }
+  }
+  
+  return name;
+}
+
+export function detectBrandFromUrl(url: string): { brand: string; category: string } | null {
+  try {
+    const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
+    const hostname = parsed.hostname.replace("www.", "");
+    
+    // Check known domains
+    if (KNOWN_DOMAIN_BRANDS[hostname]) {
+      return KNOWN_DOMAIN_BRANDS[hostname];
+    }
+    
+    // Extract brand from domain name
+    const parts = hostname.split(".");
+    let brand = parts[0];
+    brand = brand.charAt(0).toUpperCase() + brand.slice(1);
+    
+    return { brand, category: "general" };
+  } catch {
+    return null;
+  }
+}
+
+export function isServiceBrand(brandName: string, category: string): boolean {
+  const serviceCategories = [
+    "consulting", "advisory", "legal", "accounting", 
+    "marketing agency", "design agency", "software consulting",
+  ];
+  const serviceKeywords = ["advisory", "consulting", "partners", "associates", "group", "agency"];
+  
+  if (serviceCategories.some(c => category.toLowerCase().includes(c))) return true;
+  if (serviceKeywords.some(k => brandName.toLowerCase().includes(k))) return true;
+  
+  return false;
+}
