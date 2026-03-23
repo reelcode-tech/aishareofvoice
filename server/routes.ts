@@ -20,20 +20,20 @@ export async function registerRoutes(
       
       const detected = detectBrandFromUrl(url);
       if (!detected) {
-        return res.json({ brand: "Unknown", category: "general" });
+        return res.json({ brand: "Unknown", category: "general", categoryConfidence: "low", categoryReason: "Could not identify brand from URL", categorySource: "ai_inferred" });
       }
       
-      // If we know the domain, return immediately
+      // If we know the domain, return immediately with high confidence
       if (detected.category) {
-        return res.json(detected);
+        return res.json({ ...detected, categoryConfidence: "high", categoryReason: `${detected.brand} is a well-known brand in this space`, categorySource: "known_domain" });
       }
       
       // For unknown domains, use AI to infer the category
       console.log(`[Detect] Unknown domain, using AI to infer category for ${detected.brand}`);
-      const aiCategory = await detectCategoryWithAI(url, detected.brand);
-      console.log(`[Detect] AI inferred category: "${aiCategory}"`);
+      const aiResult = await detectCategoryWithAI(url, detected.brand);
+      console.log(`[Detect] AI inferred category: "${aiResult.category}" (${aiResult.confidence})`);
       
-      res.json({ brand: detected.brand, category: aiCategory });
+      res.json({ brand: detected.brand, category: aiResult.category, categoryConfidence: aiResult.confidence, categoryReason: aiResult.reason, categorySource: aiResult.source });
     } catch (error: any) {
       console.error("[Detect Error]", error);
       res.status(500).json({ error: error.message });
@@ -78,8 +78,9 @@ export async function registerRoutes(
         } else {
           const brandName = data.brandName || detected?.brand || "";
           console.log(`[Audit] No category provided, using AI to detect for ${brandName}`);
-          data.category = await detectCategoryWithAI(data.url, brandName);
-          console.log(`[Audit] AI detected category: "${data.category}"`);
+          const aiResult = await detectCategoryWithAI(data.url, brandName);
+          data.category = aiResult.category;
+          console.log(`[Audit] AI detected category: "${data.category}" (${aiResult.confidence})`);
         }
       }
       

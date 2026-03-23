@@ -170,13 +170,21 @@ export function detectBrandFromUrl(url: string): { brand: string; category: stri
  * Use AI to infer the business category when we can't detect it from the domain.
  * Fetches the homepage, then asks an LLM to categorize the business.
  */
-export async function detectCategoryWithAI(url: string, brandName: string): Promise<string> {
+export interface CategoryDetectionResult {
+  category: string;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+  source: "known_domain" | "ai_inferred";
+}
+
+export async function detectCategoryWithAI(url: string, brandName: string): Promise<CategoryDetectionResult> {
   const OpenAI = (await import("openai")).default;
   const client = new OpenAI();
   
   try {
     // Try to fetch homepage for context
     let siteContext = "";
+    let hadSiteContext = false;
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -187,13 +195,13 @@ export async function detectCategoryWithAI(url: string, brandName: string): Prom
       clearTimeout(timeoutId);
       if (resp.ok) {
         const html = await resp.text();
-        // Extract title and meta description
         const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
         const descMatch = html.match(/name="description"[^>]*content="([^"]*)"/i) ||
                           html.match(/content="([^"]*)"[^>]*name="description"/i);
         const title = titleMatch?.[1]?.trim() || "";
         const desc = descMatch?.[1]?.trim() || "";
         siteContext = `Website title: "${title}". Meta description: "${desc}".`;
+        hadSiteContext = !!(title || desc);
       }
     } catch {
       // Site may be bot-protected, that's fine
@@ -206,9 +214,15 @@ ${siteContext}
 
 Important: Base your answer on your knowledge of the brand "${brandName}" first. Only use the website metadata as a secondary signal.
 
-Respond with ONLY the category name — a short, specific label like: skincare, mattresses, CRM software, jewelry, fashion, consulting, AI writing tools, ecommerce platform, project management, fitness equipment, pet supplies, payments processing, connected fitness, meal kits, etc.
+Respond in exactly this JSON format (no markdown):
+{"category": "<short category name>", "confidence": "<high|medium|low>", "reason": "<one sentence: why this category>"}
 
-Do NOT explain. Just the category name, nothing else.`;
+Confidence guide:
+- high: well-known brand with unambiguous category (e.g. CeraVe → skincare)
+- medium: clear from site content but brand isn't widely known
+- low: inferred from limited signals, user should verify
+
+Category must be a short, specific label like: skincare, mattresses, CRM software, jewelry, fashion, consulting, AI writing tools, ecommerce platform, project management, etc.`;
 
     const response = await client.responses.create({
       model: "gpt5_nano",
@@ -217,20 +231,35 @@ Do NOT explain. Just the category name, nothing else.`;
     
     const text = (typeof response.output === 'string' 
       ? response.output 
-      : response.output_text || "").trim().toLowerCase();
+      : response.output_text || "").trim();
     
-    // Clean up the response — strip quotes, periods, explanations
-    const cleaned = text.replace(/^["']+|["']+$/g, "").replace(/\.\s*$/, "").trim();
-    
-    // Only accept short, clean category names (not full sentences)
-    if (cleaned && cleaned.split(/\s+/).length <= 5 && cleaned.length < 50) {
-      return cleaned;
+    // Try to parse as JSON
+    try {
+      const parsed = JSON.parse(text);
+      const cat = (parsed.category || "").toLowerCase().replace(/^["']+|["']+$/g, "").replace(/\.\s*$/, "").trim();
+      const conf = ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "medium";
+      const reason = (parsed.reason || "").trim();
+      
+      if (cat && cat.split(/\s+/).length <= 5 && cat.length < 50) {
+        return { category: cat, confidence: conf, reason, source: "ai_inferred" };
+      }
+    } catch {
+      // Fallback: treat entire text as category name (backward compat)
+      const cleaned = text.toLowerCase().replace(/^["']+|["']+$/g, "").replace(/\.\s*$/, "").trim();
+      if (cleaned && cleaned.split(/\s+/).length <= 5 && cleaned.length < 50) {
+        return {
+          category: cleaned,
+          confidence: hadSiteContext ? "medium" : "low",
+          reason: hadSiteContext ? `Inferred from ${brandName}'s website content` : `Best guess based on the brand name`,
+          source: "ai_inferred",
+        };
+      }
     }
     
-    return "general";
+    return { category: "general", confidence: "low", reason: "Could not determine category — please select manually", source: "ai_inferred" };
   } catch (err: any) {
     console.error("[Category Detection] AI fallback failed:", err.message);
-    return "general";
+    return { category: "general", confidence: "low", reason: "Detection failed — please select manually", source: "ai_inferred" };
   }
 }
 

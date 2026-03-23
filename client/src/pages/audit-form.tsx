@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Loader2, Plus, X, Globe, AlertCircle, Sparkles, Users, ArrowRight, Check, Pencil } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Globe, AlertCircle, Sparkles, Users, ArrowRight, Check, Pencil, ShieldCheck, ShieldAlert, ShieldQuestion } from "lucide-react";
 
 const LANGUAGES = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -41,6 +41,9 @@ export default function AuditForm() {
   const [language, setLanguage] = useState("en");
   const [detected, setDetected] = useState(false);
   const [categoryAutoDetected, setCategoryAutoDetected] = useState(false);
+  const [categoryConfidence, setCategoryConfidence] = useState<"high" | "medium" | "low" | null>(null);
+  const [categoryReason, setCategoryReason] = useState("");
+  const [categorySource, setCategorySource] = useState<"known_domain" | "ai_inferred" | null>(null);
   
   // Competitor state
   const [competitors, setCompetitors] = useState<string[]>([]);
@@ -59,6 +62,9 @@ export default function AuditForm() {
         setCategory(data.category);
         setCategoryAutoDetected(true);
       }
+      if (data.categoryConfidence) setCategoryConfidence(data.categoryConfidence);
+      if (data.categoryReason) setCategoryReason(data.categoryReason);
+      if (data.categorySource) setCategorySource(data.categorySource);
       setDetected(true);
     },
   });
@@ -197,33 +203,84 @@ export default function AuditForm() {
                 />
               </div>
 
-              {/* Category */}
+              {/* Category — intelligent detection */}
               <div>
                 <Label htmlFor="category" className="text-sm font-medium mb-1.5 block">
                   Category
                   {detectMutation.isPending && (
                     <span className="text-xs text-muted-foreground ml-2 font-normal">
                       <Loader2 className="w-3 h-3 inline animate-spin mr-1" />
-                      detecting...
-                    </span>
-                  )}
-                  {categoryAutoDetected && category && (
-                    <span className="text-xs text-primary ml-2 font-normal">
-                      <Sparkles className="w-3 h-3 inline mr-1" />
-                      auto-detected
+                      analyzing site...
                     </span>
                   )}
                 </Label>
+
+                {/* Confidence card — shown when auto-detected */}
+                {categoryAutoDetected && category && categoryConfidence && !detectMutation.isPending && (
+                  <div className={`rounded-lg border p-3 mb-2.5 ${
+                    categoryConfidence === "high" 
+                      ? "bg-primary/5 border-primary/20" 
+                      : categoryConfidence === "medium"
+                      ? "bg-yellow-500/5 border-yellow-500/20"
+                      : "bg-orange-500/5 border-orange-500/20"
+                  }`} data-testid="category-confidence-card">
+                    <div className="flex items-start gap-2.5">
+                      {categoryConfidence === "high" ? (
+                        <ShieldCheck className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+                      ) : categoryConfidence === "medium" ? (
+                        <ShieldAlert className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <ShieldQuestion className="w-4 h-4 text-orange-400 flex-shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-sm font-semibold text-foreground capitalize">{category}</span>
+                          <Badge 
+                            variant="outline" 
+                            className={`text-[10px] ${
+                              categoryConfidence === "high" 
+                                ? "text-primary border-primary/30" 
+                                : categoryConfidence === "medium"
+                                ? "text-yellow-500 border-yellow-500/30"
+                                : "text-orange-400 border-orange-400/30"
+                            }`}
+                          >
+                            {categoryConfidence} confidence
+                          </Badge>
+                          {categorySource === "known_domain" && (
+                            <Badge variant="outline" className="text-[10px] text-foreground/40 border-border/40">
+                              known brand
+                            </Badge>
+                          )}
+                        </div>
+                        {categoryReason && (
+                          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{categoryReason}</p>
+                        )}
+                        {categoryConfidence !== "high" && (
+                          <p className="text-xs text-muted-foreground/70 mt-1">
+                            Getting the category right matters — it controls which queries we test and which competitors we compare you against.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <Input
                   id="category"
                   value={category}
-                  onChange={(e) => { setCategory(e.target.value); setCategoryAutoDetected(false); }}
-                  placeholder={detectMutation.isPending ? "AI is detecting..." : "e.g. skincare, mattresses, CRM software"}
+                  onChange={(e) => { setCategory(e.target.value); setCategoryAutoDetected(false); setCategoryConfidence(null); }}
+                  placeholder={detectMutation.isPending ? "AI is analyzing your site..." : "e.g. skincare, mattresses, CRM software"}
                   className="bg-card"
                   data-testid="input-category"
                 />
                 <p className="text-xs text-muted-foreground mt-1.5">
-                  {category ? "Edit if this doesn't look right." : "We'll auto-detect this when the audit runs if left blank."}
+                  {category && categoryAutoDetected 
+                    ? "Edit if this doesn’t look right — this determines every query we test." 
+                    : category 
+                    ? "This determines which queries we test and who we compare you against."
+                    : "We’ll infer this from your site. Getting it right matters for accurate results."
+                  }
                 </p>
                 {!category && detected && !detectMutation.isPending && (
                   <div className="mt-2.5">
@@ -232,7 +289,7 @@ export default function AuditForm() {
                       {SUGGESTED_CATEGORIES.map(cat => (
                         <button
                           key={cat}
-                          onClick={() => { setCategory(cat); setCategoryAutoDetected(false); }}
+                          onClick={() => { setCategory(cat); setCategoryAutoDetected(false); setCategoryConfidence(null); }}
                           className="px-2.5 py-1 rounded-md text-xs border border-border/50 bg-card hover:border-primary/50 hover:text-primary transition-colors"
                           data-testid={`category-quick-${cat.replace(/\s+/g, '-').toLowerCase()}`}
                         >

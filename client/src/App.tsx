@@ -7,7 +7,6 @@ import Landing from "./pages/landing";
 import AuditForm from "./pages/audit-form";
 import Results from "./pages/results";
 import NotFound from "./pages/not-found";
-import { PerplexityAttribution } from "./components/PerplexityAttribution";
 
 function AppRouter() {
   return (

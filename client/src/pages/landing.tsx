@@ -99,40 +99,40 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* What Your Audit Includes */}
+      {/* What You'll Get */}
       <section className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-xl font-semibold mb-3">What your audit shows you</h2>
+        <h2 className="text-xl font-semibold mb-3">What you'll get</h2>
         <p className="text-base text-foreground/65 mb-8">Every result traces back to a real AI query and a real AI response.</p>
         <div className="grid md:grid-cols-3 gap-4">
           {[
             {
               icon: <Eye className="w-5 h-5" />,
-              title: "How often AI recommends you",
-              desc: "Your recommendation rate across all queries, reported as a probability range — not a vanity score.",
+              title: "Your visibility verdict",
+              desc: "Where you stand, stated as a verdict first. Then the data: mention rate across all queries, reported as a probability range.",
             },
             {
               icon: <MessageSquare className="w-5 h-5" />,
-              title: "The exact questions and answers",
-              desc: "See what consumers asked, what AI said, and who got recommended instead of you. Every response is expandable.",
+              title: "Questions we tested",
+              desc: "See what consumers asked, what AI said, who got recommended instead of you, and what evidence the model relied on.",
             },
             {
               icon: <Users className="w-5 h-5" />,
-              title: "Who shows up most often",
-              desc: "Your competitors ranked by how frequently AI mentions them. See who's winning and by how much.",
+              title: "Brands AI recommends most",
+              desc: "Your competitors ranked by how frequently AI mentions them. See who's winning, by how much, and in what type of queries.",
             },
             {
               icon: <Shield className="w-5 h-5" />,
-              title: "Why AI does or doesn't pick you",
-              desc: "Technical scan of your site: llms.txt, schema, crawler access, content depth. Ranked by impact on your visibility.",
+              title: "What helps or hurts your visibility",
+              desc: "Technical scan of your site: llms.txt, schema, crawler access, content depth. Ranked by impact, linked to specific failure modes.",
             },
             {
               icon: <Zap className="w-5 h-5" />,
               title: "What to fix first",
-              desc: "Prioritized recommendations with examples. Not generic advice — each one checks your actual site before suggesting.",
+              desc: "Prioritized recommendations mapped to the actual queries you're losing. Not generic advice — tied to observed gaps in your results.",
             },
             {
               icon: <Globe className="w-5 h-5" />,
-              title: "How AI sees you in 8 languages",
+              title: "8 languages, same insight",
               desc: "AI recommends differently in Spanish, French, German, Portuguese, Japanese, Korean, and Chinese. Test your real markets.",
             },
           ].map((card) => (
@@ -151,9 +151,9 @@ export default function Landing() {
           <h2 className="text-xl font-semibold mb-8">How it works</h2>
           <div className="grid md:grid-cols-3 gap-6">
             {[
-              { step: "1", title: "Enter your URL", desc: "We detect your brand and category automatically." },
+              { step: "1", title: "Enter your URL", desc: "We detect your brand, category, and competitors automatically." },
               { step: "2", title: "AI engines run", desc: "Real buying questions hit ChatGPT, Gemini, and Claude in parallel." },
-              { step: "3", title: "See who gets recommended", desc: "Your visibility rate, competitor map, and what to fix — in under a minute." },
+              { step: "3", title: "See who gets recommended", desc: "Your visibility verdict, competitor map, and what to fix — in under a minute." },
             ].map((item) => (
               <div key={item.step} className="flex gap-3">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-sm font-semibold text-primary">
@@ -193,11 +193,8 @@ export default function Landing() {
 
       {/* Footer */}
       <footer className="border-t border-border/40 py-8">
-        <div className="max-w-6xl mx-auto px-6 flex items-center justify-between text-xs text-muted-foreground">
+        <div className="max-w-6xl mx-auto px-6 text-center text-xs text-muted-foreground">
           <span>&copy; 2026 AIShareOfVoice.ai</span>
-          <a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
-            Created with Perplexity Computer
-          </a>
         </div>
       </footer>
     </div>

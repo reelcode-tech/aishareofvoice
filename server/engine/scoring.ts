@@ -80,6 +80,35 @@ interface CompetitorData {
   archetype: "dominant" | "established" | "consistent" | "emerging" | "invisible";
 }
 
+// Classify a citation URL by source type
+function classifySource(url: string): string {
+  const domain = url.toLowerCase();
+  if (domain.includes("reddit.com")) return "reddit";
+  if (domain.includes("youtube.com") || domain.includes("youtu.be")) return "video";
+  if (domain.includes("amazon.com") || domain.includes("walmart.com") || domain.includes("target.com") || domain.includes("bestbuy.com") || domain.includes("etsy.com") || domain.includes("ebay.com")) return "marketplace";
+  if (domain.includes("byrdie.com") || domain.includes("allure.com") || domain.includes("vogue.com") || domain.includes("nytimes.com") || domain.includes("wirecutter.com") || domain.includes("forbes.com") || domain.includes("techcrunch.com") || domain.includes("verge.com") || domain.includes("cnet.com") || domain.includes("pcmag.com") || domain.includes("wired.com") || domain.includes("gq.com") || domain.includes("elle.com") || domain.includes("cosmopolitan.com") || domain.includes("glamour.com") || domain.includes("self.com") || domain.includes("healthline.com") || domain.includes("webmd.com") || domain.includes("g2.com") || domain.includes("capterra.com") || domain.includes("trustpilot.com") || domain.includes("sleepfoundation.org")) return "editorial";
+  if (domain.includes("blog") || domain.includes("review")) return "editorial";
+  return "brand_site";
+}
+
+// Determine brand position in AI response (first mention, listed, or not present)
+function getBrandPosition(response: string, brand: string): string {
+  const lower = response.toLowerCase();
+  const brandLower = brand.toLowerCase();
+  if (!lower.includes(brandLower)) return "not_found";
+  
+  // Check if brand appears in first 200 chars (top of response)
+  const firstChunk = lower.slice(0, 200);
+  if (firstChunk.includes(brandLower)) return "top_pick";
+  
+  // Check if in first half
+  const halfWay = Math.floor(lower.length / 2);
+  const firstHalf = lower.slice(0, halfWay);
+  if (firstHalf.includes(brandLower)) return "featured";
+  
+  return "mentioned";
+}
+
 interface ScoringResult {
   overall: {
     score: number;
@@ -102,19 +131,22 @@ interface ScoringResult {
     negative: number;
     notMentioned: number;
   };
-  perEngine: Record<string, { score: number; mentionRate: number; totalQueries: number }>;
+  perEngine: Record<string, { score: number; mentionRate: number; totalQueries: number; byIntent: Record<string, { mentioned: number; total: number }> }>;
   queryDetails: {
     query: string;
     intent: string;
     results: {
       engine: string;
       mentionsBrand: boolean;
+      brandPosition: string;
       mentionedBrands: string[];
       sentiment: string;
       responseSnippet: string;
       citations: string[];
+      sourceTypes: string[];
     }[];
   }[];
+  intentBreakdown: Record<string, { mentioned: number; total: number; rate: number }>;
 }
 
 // Wilson score interval for confidence bounds
@@ -175,8 +207,8 @@ export function calculateScores(
   const wilsonResult = wilsonInterval(brandMentions, totalQueries);
   const aiVisibilityScore = wilsonResult.center;
   
-  // Per-engine breakdown
-  const perEngine: Record<string, { score: number; mentionRate: number; totalQueries: number }> = {};
+  // Per-engine breakdown with intent-level analysis
+  const perEngine: Record<string, { score: number; mentionRate: number; totalQueries: number; byIntent: Record<string, { mentioned: number; total: number }> }> = {};
   const engineGroups = new Map<string, EngineResult[]>();
   for (const result of engineResults) {
     const existing = engineGroups.get(result.engine) || [];
@@ -186,10 +218,34 @@ export function calculateScores(
   for (const [engine, results] of engineGroups) {
     const mentions = results.filter(r => r.mentionsBrand).length;
     const rate = results.length > 0 ? Math.round((mentions / results.length) * 1000) / 10 : 0;
+    
+    // Build per-intent breakdown for this engine
+    const byIntent: Record<string, { mentioned: number; total: number }> = {};
+    for (const r of results) {
+      // Map query to intent by looking it up in queryGroups
+      let intent = "recommendation";
+      for (const [q, qResults] of queryGroups) {
+        if (qResults.includes(r)) {
+          // Use the query text to infer intent
+          const ql = q.toLowerCase();
+          if (ql.includes(" vs ") || ql.includes("comparison") || ql.includes("compare")) intent = "comparison";
+          else if (ql.includes("best ") || ql.includes("top ")) intent = "best";
+          else if (ql.includes("review") || ql.includes("worth it")) intent = "review";
+          else if (ql.includes("alternative")) intent = "alternative";
+          else if (ql.includes(brandName.toLowerCase())) intent = "branded";
+          break;
+        }
+      }
+      if (!byIntent[intent]) byIntent[intent] = { mentioned: 0, total: 0 };
+      byIntent[intent].total++;
+      if (r.mentionsBrand) byIntent[intent].mentioned++;
+    }
+    
     perEngine[engine] = {
       score: rate,
       mentionRate: rate,
       totalQueries: results.length,
+      byIntent,
     };
   }
   
@@ -254,19 +310,47 @@ export function calculateScores(
     competitiveScore * 0.15
   );
   
-  // Query details for the conversation cards
-  const queryDetails = Array.from(queryGroups.entries()).map(([query, results]) => ({
-    query,
-    intent: "recommendation", // Will be matched from templates
-    results: results.map(r => ({
-      engine: r.engine,
-      mentionsBrand: r.mentionsBrand,
-      mentionedBrands: r.mentionedBrands.map(b => normalizeBrandName(b) || b),
-      sentiment: r.sentiment,
-      responseSnippet: r.response.slice(0, 500),
-      citations: r.citations,
-    })),
-  }));
+  // Query details with enhanced data for the results page
+  const queryDetails = Array.from(queryGroups.entries()).map(([query, results]) => {
+    // Infer intent from query text
+    const ql = query.toLowerCase();
+    let intent = "recommendation";
+    if (ql.includes(" vs ") || ql.includes("comparison") || ql.includes("compare")) intent = "comparison";
+    else if (ql.includes("best ") || ql.includes("top ")) intent = "best";
+    else if (ql.includes("review") || ql.includes("worth it")) intent = "review";
+    else if (ql.includes("alternative")) intent = "alternative";
+    else if (ql.includes(brandName.toLowerCase())) intent = "branded";
+    
+    return {
+      query,
+      intent,
+      results: results.map(r => ({
+        engine: r.engine,
+        mentionsBrand: r.mentionsBrand,
+        brandPosition: getBrandPosition(r.response, brandName),
+        mentionedBrands: r.mentionedBrands.map(b => normalizeBrandName(b) || b),
+        sentiment: r.sentiment,
+        responseSnippet: r.response.slice(0, 500),
+        citations: r.citations,
+        sourceTypes: r.citations.map(c => classifySource(c)),
+      })),
+    };
+  });
+  
+  // Build intent-level breakdown across all engines
+  const intentBreakdown: Record<string, { mentioned: number; total: number; rate: number }> = {};
+  for (const qd of queryDetails) {
+    if (!intentBreakdown[qd.intent]) intentBreakdown[qd.intent] = { mentioned: 0, total: 0, rate: 0 };
+    for (const r of qd.results) {
+      intentBreakdown[qd.intent].total++;
+      if (r.mentionsBrand) intentBreakdown[qd.intent].mentioned++;
+    }
+  }
+  // Calculate rates
+  for (const intent of Object.keys(intentBreakdown)) {
+    const ib = intentBreakdown[intent];
+    ib.rate = ib.total > 0 ? Math.round((ib.mentioned / ib.total) * 100) : 0;
+  }
   
   return {
     overall: {
@@ -287,6 +371,7 @@ export function calculateScores(
     sentimentBreakdown,
     perEngine,
     queryDetails,
+    intentBreakdown,
   };
 }
 
