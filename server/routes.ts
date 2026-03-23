@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { runAudit } from "./engine/audit-runner";
 import { detectBrandFromUrl, detectCategoryWithAI } from "./engine/brand-detection";
+import { discoverCompetitors } from "./engine/competitor-discovery";
 import { auditRequestSchema } from "@shared/schema";
 
 export async function registerRoutes(
@@ -35,6 +36,26 @@ export async function registerRoutes(
       res.json({ brand: detected.brand, category: aiCategory });
     } catch (error: any) {
       console.error("[Detect Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+  
+  // Discover competitors for a brand+category (lightweight AI call)
+  // This runs BEFORE the full audit so the user can review/edit the competitor set
+  app.post("/api/discover-competitors", async (req, res) => {
+    try {
+      const { brandName, category, url } = req.body;
+      if (!brandName) return res.status(400).json({ error: "Brand name required" });
+      
+      const cat = category || "general";
+      console.log(`[Discover] Finding competitors for ${brandName} in ${cat}`);
+      
+      const competitors = await discoverCompetitors(brandName, cat, url);
+      console.log(`[Discover] Found ${competitors.length} competitors: ${competitors.join(", ")}`);
+      
+      res.json({ competitors });
+    } catch (error: any) {
+      console.error("[Discover Error]", error);
       res.status(500).json({ error: error.message });
     }
   });

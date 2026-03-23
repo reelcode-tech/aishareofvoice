@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Loader2, Plus, X, Globe, AlertCircle, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Globe, AlertCircle, Sparkles, Users, ArrowRight, Check, Pencil } from "lucide-react";
 
 const LANGUAGES = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -26,22 +26,28 @@ const SUGGESTED_CATEGORIES = [
   "home appliances", "personal care", "consulting", "productivity",
 ];
 
+type Step = "details" | "competitors";
+
 export default function AuditForm() {
   const [, routeParams] = useRoute("/audit/:encodedUrl");
   const urlParam = routeParams?.encodedUrl ? decodeURIComponent(routeParams.encodedUrl) : "";
   
   const [, navigate] = useLocation();
+  const [step, setStep] = useState<Step>("details");
   const [url, setUrl] = useState(urlParam);
   const [brandName, setBrandName] = useState("");
   const [category, setCategory] = useState("");
   const [tier, setTier] = useState("free");
   const [language, setLanguage] = useState("en");
-  const [customCompetitors, setCustomCompetitors] = useState<string[]>([]);
-  const [newCompetitor, setNewCompetitor] = useState("");
   const [detected, setDetected] = useState(false);
   const [categoryAutoDetected, setCategoryAutoDetected] = useState(false);
   
-  // Auto-detect brand AND category from URL (backend uses AI for unknown domains)
+  // Competitor state
+  const [competitors, setCompetitors] = useState<string[]>([]);
+  const [newCompetitor, setNewCompetitor] = useState("");
+  const [competitorsConfirmed, setCompetitorsConfirmed] = useState(false);
+  
+  // Auto-detect brand AND category from URL
   const detectMutation = useMutation({
     mutationFn: async (url: string) => {
       const res = await apiRequest("POST", "/api/detect", { url });
@@ -57,11 +63,20 @@ export default function AuditForm() {
     },
   });
   
-  useEffect(() => {
-    if (urlParam) {
-      detectMutation.mutate(urlParam);
-    }
-  }, [urlParam]);
+  // Discover competitors
+  const discoverMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/discover-competitors", {
+        brandName,
+        category: category || "general",
+        url,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setCompetitors(data.competitors || []);
+    },
+  });
   
   // Run audit
   const auditMutation = useMutation({
@@ -72,7 +87,7 @@ export default function AuditForm() {
         category,
         tier,
         language,
-        customCompetitors: customCompetitors.length > 0 ? customCompetitors : undefined,
+        customCompetitors: competitors.length > 0 ? competitors : undefined,
       });
       return res.json();
     },
@@ -80,20 +95,43 @@ export default function AuditForm() {
       navigate(`/results/${data.id}`);
     },
   });
-
+  
+  useEffect(() => {
+    if (urlParam) {
+      detectMutation.mutate(urlParam);
+    }
+  }, [urlParam]);
+  
+  // When moving to step 2, auto-discover competitors
+  const goToCompetitorStep = () => {
+    setStep("competitors");
+    setCompetitorsConfirmed(false);
+    discoverMutation.mutate();
+  };
+  
+  const goBackToDetails = () => {
+    setStep("details");
+  };
   
   const addCompetitor = () => {
-    if (newCompetitor.trim() && !customCompetitors.includes(newCompetitor.trim())) {
-      setCustomCompetitors([...customCompetitors, newCompetitor.trim()]);
+    const name = newCompetitor.trim();
+    if (name && !competitors.includes(name)) {
+      setCompetitors([...competitors, name]);
       setNewCompetitor("");
     }
   };
   
   const removeCompetitor = (comp: string) => {
-    setCustomCompetitors(customCompetitors.filter(c => c !== comp));
+    setCompetitors(competitors.filter(c => c !== comp));
+  };
+  
+  const runAudit = () => {
+    setCompetitorsConfirmed(true);
+    auditMutation.mutate();
   };
   
   const selectedLang = LANGUAGES.find(l => l.code === language);
+  const canProceedToStep2 = url && brandName;
 
   return (
     <div className="min-h-screen bg-background">
@@ -101,225 +139,337 @@ export default function AuditForm() {
       <header className="border-b border-border/40 backdrop-blur-sm sticky top-0 z-50 bg-background/80">
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-3">
           <button
-            onClick={() => navigate("/")}
+            onClick={() => step === "competitors" ? goBackToDetails() : navigate("/")}
             className="text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 text-sm"
             data-testid="back-button"
           >
             <ArrowLeft className="w-4 h-4" />
-            Change URL
+            {step === "competitors" ? "Back to Details" : "Change URL"}
           </button>
+          
+          {/* Step indicator */}
+          <div className="flex items-center gap-2 ml-auto text-xs text-muted-foreground">
+            <span className={`flex items-center gap-1 ${step === "details" ? "text-primary font-medium" : "text-muted-foreground"}`}>
+              {step === "competitors" ? <Check className="w-3 h-3" /> : <span className="w-4 h-4 rounded-full border border-current flex items-center justify-center text-[10px]">1</span>}
+              Details
+            </span>
+            <span className="text-border">—</span>
+            <span className={`flex items-center gap-1 ${step === "competitors" ? "text-primary font-medium" : "text-muted-foreground"}`}>
+              <span className="w-4 h-4 rounded-full border border-current flex items-center justify-center text-[10px]">2</span>
+              Competitors
+            </span>
+          </div>
         </div>
       </header>
 
       <div className="max-w-3xl mx-auto px-6 py-12">
-        <h1 className="text-xl font-bold mb-2" data-testid="form-heading">Confirm Audit Details</h1>
-        <p className="text-sm text-muted-foreground mb-8">
-          We auto-detected your brand and category. Review the details below and run your audit.
-        </p>
-
-        <div className="space-y-6">
-          {/* URL */}
-          <div>
-            <Label htmlFor="url" className="text-sm font-medium mb-1.5 block">Website URL</Label>
-            <Input
-              id="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              className="bg-card"
-              data-testid="input-url"
-            />
-          </div>
-
-          {/* Brand Name */}
-          <div>
-            <Label htmlFor="brand" className="text-sm font-medium mb-1.5 block">Brand Name</Label>
-            <Input
-              id="brand"
-              value={brandName}
-              onChange={(e) => setBrandName(e.target.value)}
-              placeholder={detectMutation.isPending ? "Detecting..." : "Enter brand name"}
-              className="bg-card"
-              data-testid="input-brand"
-            />
-          </div>
-
-          {/* Category — auto-detected, editable as override */}
-          <div>
-            <Label htmlFor="category" className="text-sm font-medium mb-1.5 block">
-              Category
-              {detectMutation.isPending && (
-                <span className="text-xs text-muted-foreground ml-2 font-normal">
-                  <Loader2 className="w-3 h-3 inline animate-spin mr-1" />
-                  detecting...
-                </span>
-              )}
-              {categoryAutoDetected && category && (
-                <span className="text-xs text-primary ml-2 font-normal">
-                  <Sparkles className="w-3 h-3 inline mr-1" />
-                  auto-detected
-                </span>
-              )}
-            </Label>
-            <Input
-              id="category"
-              value={category}
-              onChange={(e) => { setCategory(e.target.value); setCategoryAutoDetected(false); }}
-              placeholder={detectMutation.isPending ? "AI is detecting..." : "e.g. skincare, mattresses, CRM software"}
-              className="bg-card"
-              data-testid="input-category"
-            />
-            <p className="text-xs text-muted-foreground mt-1.5">
-              {category ? "Edit if this doesn't look right." : "We'll auto-detect this when the audit runs if left blank."}
+        {/* ====================== STEP 1: Details ====================== */}
+        {step === "details" && (
+          <>
+            <h1 className="text-xl font-bold mb-2" data-testid="form-heading">Confirm Audit Details</h1>
+            <p className="text-sm text-muted-foreground mb-8">
+              We auto-detected your brand and category. Review the details below, then we'll identify your competitors.
             </p>
-            {/* Quick-pick suggestions only when empty and detection didn't find anything */}
-            {!category && detected && !detectMutation.isPending && (
-              <div className="mt-2.5">
-                <p className="text-xs text-muted-foreground mb-1.5">Or pick one:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {SUGGESTED_CATEGORIES.map(cat => (
+
+            <div className="space-y-6">
+              {/* URL */}
+              <div>
+                <Label htmlFor="url" className="text-sm font-medium mb-1.5 block">Website URL</Label>
+                <Input
+                  id="url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  className="bg-card"
+                  data-testid="input-url"
+                />
+              </div>
+
+              {/* Brand Name */}
+              <div>
+                <Label htmlFor="brand" className="text-sm font-medium mb-1.5 block">Brand Name</Label>
+                <Input
+                  id="brand"
+                  value={brandName}
+                  onChange={(e) => setBrandName(e.target.value)}
+                  placeholder={detectMutation.isPending ? "Detecting..." : "Enter brand name"}
+                  className="bg-card"
+                  data-testid="input-brand"
+                />
+              </div>
+
+              {/* Category */}
+              <div>
+                <Label htmlFor="category" className="text-sm font-medium mb-1.5 block">
+                  Category
+                  {detectMutation.isPending && (
+                    <span className="text-xs text-muted-foreground ml-2 font-normal">
+                      <Loader2 className="w-3 h-3 inline animate-spin mr-1" />
+                      detecting...
+                    </span>
+                  )}
+                  {categoryAutoDetected && category && (
+                    <span className="text-xs text-primary ml-2 font-normal">
+                      <Sparkles className="w-3 h-3 inline mr-1" />
+                      auto-detected
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  id="category"
+                  value={category}
+                  onChange={(e) => { setCategory(e.target.value); setCategoryAutoDetected(false); }}
+                  placeholder={detectMutation.isPending ? "AI is detecting..." : "e.g. skincare, mattresses, CRM software"}
+                  className="bg-card"
+                  data-testid="input-category"
+                />
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  {category ? "Edit if this doesn't look right." : "We'll auto-detect this when the audit runs if left blank."}
+                </p>
+                {!category && detected && !detectMutation.isPending && (
+                  <div className="mt-2.5">
+                    <p className="text-xs text-muted-foreground mb-1.5">Or pick one:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {SUGGESTED_CATEGORIES.map(cat => (
+                        <button
+                          key={cat}
+                          onClick={() => { setCategory(cat); setCategoryAutoDetected(false); }}
+                          className="px-2.5 py-1 rounded-md text-xs border border-border/50 bg-card hover:border-primary/50 hover:text-primary transition-colors"
+                          data-testid={`category-quick-${cat.replace(/\s+/g, '-').toLowerCase()}`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Language */}
+              <div>
+                <Label className="text-sm font-medium mb-1.5 block">
+                  <Globe className="w-4 h-4 inline mr-1.5" />
+                  Query Language
+                </Label>
+                <Select value={language} onValueChange={setLanguage}>
+                  <SelectTrigger className="bg-card" data-testid="select-language">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {LANGUAGES.map(lang => (
+                      <SelectItem key={lang.code} value={lang.code}>
+                        {lang.flag} {lang.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {language !== "en" && (
+                  <p className="text-xs text-primary mt-1.5">
+                    Queries will run in {selectedLang?.label} to match how your market searches.
+                  </p>
+                )}
+              </div>
+
+              {/* Tier Selection */}
+              <div>
+                <Label className="text-sm font-medium mb-1.5 block">Audit Depth</Label>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { id: "free", label: "Starter", line1: "Quick snapshot", line2: "12 AI queries", price: "Free" },
+                    { id: "pro", label: "Growth", line1: "Full visibility scan", line2: "20 queries, 3 AI engines", price: "$29" },
+                    { id: "business", label: "Pro", line1: "Deep competitive intel", line2: "25 queries, weekly tracking", price: "$99" },
+                    { id: "enterprise", label: "Enterprise", line1: "Ongoing optimization", line2: "30 queries, daily alerts", price: "$299" },
+                  ].map(t => (
                     <button
-                      key={cat}
-                      onClick={() => { setCategory(cat); setCategoryAutoDetected(false); }}
-                      className="px-2.5 py-1 rounded-md text-xs border border-border/50 bg-card hover:border-primary/50 hover:text-primary transition-colors"
-                      data-testid={`category-quick-${cat.replace(/\s+/g, '-').toLowerCase()}`}
+                      key={t.id}
+                      onClick={() => setTier(t.id)}
+                      className={`p-3 rounded-lg border text-left transition-all ${
+                        tier === t.id
+                          ? "border-primary bg-primary/5"
+                          : "border-border/50 bg-card hover:border-border"
+                      }`}
+                      data-testid={`tier-${t.id}`}
                     >
-                      {cat}
+                      <div className="text-sm font-semibold">{t.label}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{t.line1}</div>
+                      <div className="text-xs text-muted-foreground">{t.line2}</div>
+                      <div className="text-xs font-semibold text-primary mt-1">{t.price}</div>
                     </button>
                   ))}
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Language */}
-          <div>
-            <Label className="text-sm font-medium mb-1.5 block">
-              <Globe className="w-4 h-4 inline mr-1.5" />
-              Query Language
-            </Label>
-            <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className="bg-card" data-testid="select-language">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LANGUAGES.map(lang => (
-                  <SelectItem key={lang.code} value={lang.code}>
-                    {lang.flag} {lang.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {language !== "en" && (
-              <p className="text-xs text-primary mt-1.5">
-                Queries will run in {selectedLang?.label} to match how your market searches.
-              </p>
-            )}
-          </div>
-
-          {/* Custom Competitors */}
-          <div>
-            <Label className="text-sm font-medium mb-1.5 block">
-              Custom Competitors (optional)
-            </Label>
-            <p className="text-xs text-muted-foreground mb-2">
-              Define who you actually compete against. Leave empty for auto-detection.
-            </p>
-            <div className="flex gap-2 mb-2">
-              <Input
-                value={newCompetitor}
-                onChange={(e) => setNewCompetitor(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCompetitor())}
-                placeholder="Add competitor brand name"
-                className="bg-card flex-1"
-                data-testid="input-competitor"
-              />
-              <Button variant="secondary" size="sm" onClick={addCompetitor} data-testid="button-add-competitor">
-                <Plus className="w-4 h-4" />
+              {/* Next: Discover Competitors */}
+              <Button
+                onClick={goToCompetitorStep}
+                disabled={!canProceedToStep2 || detectMutation.isPending}
+                className="w-full h-12 text-base"
+                data-testid="button-next-competitors"
+              >
+                Identify Competitors
+                <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             </div>
-            {customCompetitors.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {customCompetitors.map(comp => (
-                  <Badge key={comp} variant="secondary" className="gap-1.5 pr-1">
-                    {comp}
-                    <button onClick={() => removeCompetitor(comp)} className="hover:text-destructive">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </Badge>
-                ))}
-              </div>
-            )}
-          </div>
+          </>
+        )}
 
-          {/* Tier Selection — value-based, not engine-based */}
-          <div>
-            <Label className="text-sm font-medium mb-1.5 block">Audit Depth</Label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                { id: "free", label: "Starter", line1: "Quick snapshot", line2: "12 AI queries", price: "Free" },
-                { id: "pro", label: "Growth", line1: "Full visibility scan", line2: "20 queries, 3 AI engines", price: "$29" },
-                { id: "business", label: "Pro", line1: "Deep competitive intel", line2: "25 queries, weekly tracking", price: "$99" },
-                { id: "enterprise", label: "Enterprise", line1: "Ongoing optimization", line2: "30 queries, daily alerts", price: "$299" },
-              ].map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setTier(t.id)}
-                  className={`p-3 rounded-lg border text-left transition-all ${
-                    tier === t.id
-                      ? "border-primary bg-primary/5"
-                      : "border-border/50 bg-card hover:border-border"
-                  }`}
-                  data-testid={`tier-${t.id}`}
-                >
-                  <div className="text-sm font-semibold">{t.label}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{t.line1}</div>
-                  <div className="text-xs text-muted-foreground">{t.line2}</div>
-                  <div className="text-xs font-semibold text-primary mt-1">{t.price}</div>
-                </button>
-              ))}
+        {/* ====================== STEP 2: Competitor Preview ====================== */}
+        {step === "competitors" && (
+          <>
+            <div className="flex items-center gap-3 mb-2">
+              <Users className="w-5 h-5 text-primary" />
+              <h1 className="text-xl font-bold" data-testid="competitors-heading">Review Competitors</h1>
             </div>
-          </div>
+            <p className="text-sm text-muted-foreground mb-8">
+              We identified these competitors for <span className="text-foreground font-medium">{brandName}</span> in <span className="text-foreground font-medium">{category || "general"}</span>. Add, remove, or edit before running the audit.
+            </p>
 
-          {/* Submit */}
-          <Button
-            onClick={() => auditMutation.mutate()}
-            disabled={auditMutation.isPending || !url || !brandName}
-            className="w-full h-12 text-base"
-            data-testid="button-run-audit"
-          >
-            {auditMutation.isPending ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Analyzing AI visibility...
-              </>
-            ) : (
-              "Run AI Visibility Audit"
-            )}
-          </Button>
-          
-          {auditMutation.isError && (
-            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-4" data-testid="error-message">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                <div>
-                  <p className="font-medium">Audit failed</p>
-                  <p className="text-xs mt-1 opacity-80">
-                    {(() => {
-                      const msg = auditMutation.error.message || "";
-                      // Strip raw HTML from error messages
-                      if (msg.includes("<html") || msg.includes("<style") || msg.includes("<!DOCTYPE")) {
-                        return "The server encountered an error. Please try again in a moment.";
-                      }
-                      // Strip HTTP status prefix for cleaner display
-                      const cleaned = msg.replace(/^\d{3}:\s*/, "");
-                      return cleaned.length > 200 ? cleaned.slice(0, 200) + "..." : cleaned;
-                    })()}
-                  </p>
+            <div className="space-y-6">
+              {/* Loading state */}
+              {discoverMutation.isPending && (
+                <div className="flex items-center justify-center py-12" data-testid="competitors-loading">
+                  <div className="text-center">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-3" />
+                    <p className="text-sm text-muted-foreground">Identifying competitors for {brandName}...</p>
+                    <p className="text-xs text-muted-foreground mt-1">This takes a few seconds</p>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Error state */}
+              {discoverMutation.isError && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-4" data-testid="competitors-error">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-medium">Couldn't auto-detect competitors</p>
+                      <p className="text-xs mt-1 opacity-80">
+                        You can still add competitors manually below.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Competitor list */}
+              {!discoverMutation.isPending && (
+                <div>
+                  <Label className="text-sm font-medium mb-3 block">
+                    Detected Competitors ({competitors.length})
+                    {competitors.length > 0 && (
+                      <span className="text-xs text-primary ml-2 font-normal">
+                        <Sparkles className="w-3 h-3 inline mr-1" />
+                        AI-identified
+                      </span>
+                    )}
+                  </Label>
+                  
+                  {competitors.length > 0 ? (
+                    <div className="space-y-2" data-testid="competitor-list">
+                      {competitors.map((comp, i) => (
+                        <div
+                          key={comp}
+                          className="flex items-center gap-3 bg-card border border-border/50 rounded-lg px-4 py-3 group"
+                          data-testid={`competitor-item-${i}`}
+                        >
+                          <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
+                          <span className="text-sm font-medium flex-1">{comp}</span>
+                          <button
+                            onClick={() => removeCompetitor(comp)}
+                            className="text-muted-foreground hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
+                            data-testid={`remove-competitor-${i}`}
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : !discoverMutation.isPending && (
+                    <div className="text-sm text-muted-foreground bg-card border border-border/30 rounded-lg p-6 text-center">
+                      No competitors detected. Add some manually below.
+                    </div>
+                  )}
+
+                  {/* Add competitor input */}
+                  <div className="mt-4">
+                    <Label className="text-xs text-muted-foreground mb-1.5 block">Add a competitor</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        value={newCompetitor}
+                        onChange={(e) => setNewCompetitor(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addCompetitor())}
+                        placeholder="Type a competitor brand name"
+                        className="bg-card flex-1"
+                        data-testid="input-add-competitor"
+                      />
+                      <Button variant="secondary" size="sm" onClick={addCompetitor} className="px-3" data-testid="button-add-competitor">
+                        <Plus className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Summary bar */}
+              {!discoverMutation.isPending && (
+                <div className="bg-card/50 border border-border/30 rounded-lg p-4 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    <span>Brand: <span className="text-foreground font-medium">{brandName}</span></span>
+                    <span>Category: <span className="text-foreground font-medium">{category || "general"}</span></span>
+                    <span>Language: <span className="text-foreground font-medium">{selectedLang?.flag} {selectedLang?.label}</span></span>
+                    <span>Tier: <span className="text-foreground font-medium capitalize">{tier}</span></span>
+                  </div>
+                </div>
+              )}
+
+              {/* Run Audit button */}
+              {!discoverMutation.isPending && (
+                <Button
+                  onClick={runAudit}
+                  disabled={auditMutation.isPending || !url || !brandName}
+                  className="w-full h-12 text-base"
+                  data-testid="button-run-audit"
+                >
+                  {auditMutation.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Analyzing AI visibility...
+                    </>
+                  ) : (
+                    <>
+                      Run AI Visibility Audit
+                      {competitors.length > 0 && (
+                        <span className="text-xs opacity-70 ml-2">
+                          vs {competitors.length} competitor{competitors.length !== 1 ? "s" : ""}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </Button>
+              )}
+              
+              {auditMutation.isError && (
+                <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-4" data-testid="error-message">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="font-medium">Audit failed</p>
+                      <p className="text-xs mt-1 opacity-80">
+                        {(() => {
+                          const msg = auditMutation.error.message || "";
+                          if (msg.includes("<html") || msg.includes("<style") || msg.includes("<!DOCTYPE")) {
+                            return "The server encountered an error. Please try again in a moment.";
+                          }
+                          const cleaned = msg.replace(/^\d{3}:\s*/, "");
+                          return cleaned.length > 200 ? cleaned.slice(0, 200) + "..." : cleaned;
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );
