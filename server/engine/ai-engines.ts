@@ -22,7 +22,7 @@ interface EngineResult {
 interface EngineConfig {
   name: string;
   tier: "free" | "pro" | "business" | "enterprise";
-  queryFn: (query: string) => Promise<{ response: string }>;
+  queryFn: (query: string, systemPrompt?: string) => Promise<{ response: string }>;
   model: string;
 }
 
@@ -118,6 +118,45 @@ function isBrandNoise(candidate: string): boolean {
   return false;
 }
 
+// Additional validation for extracted brand candidates
+// Returns true if the candidate looks like a real brand, false if it's noise
+function isLikelyBrand(candidate: string): boolean {
+  const lower = candidate.toLowerCase().trim();
+  
+  // Too short or too long
+  if (candidate.length < 2 || candidate.length > 35) return false;
+  
+  // Too many words (real brand names are rarely >4 words)
+  if (candidate.split(/\s+/).length > 4) return false;
+  
+  // Reject common instruction/heading patterns
+  const instructionPatterns = [
+    /^(start|try|use|look|apply|wear|pick|choose|consider|check|avoid|find|get|make|do|don'?t|if you)/i,
+    /^(why|how|what|when|where|which|who|tip|note|key|core|quick|example|ideal)/i,
+    /^(all|any|some|many|every|each|both|either|neither|no |the |a |an )/i,
+    /(skin|sleeper|features?|benefits?|ingredients?|options?|preferences?|position|compliance)$/i,
+    /^(pros|cons|strengths|limitations|pricing|typical|summary|verdict|conclusion|overview)/i,
+    /^(step|phase|stage|level|tier|plan|option|section|category|type|kind|sort)/i,
+    /(friendly|backed|based|driven|focused|powered|oriented|sensitive|prone|proof)$/i,
+    /^(free|open|paid|low|mid|high|full|half|ultra|super|mega|micro|mini|nano|bio|neuro)/i,
+    /^(next|new|old|modern|classic|original|standard|basic|advanced|professional|ultimate|elite)/i,
+  ];
+  for (const p of instructionPatterns) {
+    if (p.test(candidate)) return false;
+  }
+  
+  // Reject ingredient/attribute names common in skincare, mattresses, etc.
+  const ingredientNoiseWords = new Set([
+    "ceramides", "niacinamide", "retinol", "hyaluronic acid", "salicylic acid",
+    "vitamin c", "vitamin e", "bakuchiol", "peptides", "collagen", "spf",
+    "memory foam", "latex", "hybrid", "innerspring", "coils",
+    "fragrance", "organic", "vegan", "cruelty",
+  ]);
+  if (ingredientNoiseWords.has(lower)) return false;
+  
+  return true;
+}
+
 // Extract brands mentioned in AI response
 function extractBrands(response: string, targetBrand: string): {
   mentionsBrand: boolean;
@@ -131,25 +170,36 @@ function extractBrands(response: string, targetBrand: string): {
     text.includes(targetLower.replace(/['']/g, "")) ||
     text.includes(targetLower.replace(/\s+/g, ""));
   
-  // Extract numbered/bulleted brand mentions
-  const brandPatterns = [
-    /\d+\.\s*\*?\*?([A-Z][A-Za-z\s&'.()-]+?)(?:\*?\*?\s*[-–—:]|\s*\n)/g,
-    /[-•]\s*\*?\*?([A-Z][A-Za-z\s&'.()-]+?)(?:\*?\*?\s*[-–—:]|\s*\n)/g,
-    /\*\*([A-Z][A-Za-z\s&'.()-]+?)\*\*/g,
-  ];
-  
+  // Primary extraction: bold text (**BrandName**) — most reliable since we instruct the AI to bold brands
   const mentionedBrands = new Set<string>();
-  for (const pattern of brandPatterns) {
-    let match;
-    while ((match = pattern.exec(response)) !== null) {
+  
+  // Pattern 1 (highest priority): **Bold brand names** — the system prompt tells AI to do this
+  const boldPattern = /\*\*([A-Z][A-Za-z\s&'.()\-/]+?)\*\*/g;
+  let match;
+  while ((match = boldPattern.exec(response)) !== null) {
+    const brand = match[1].trim().replace(/\*+/g, "");
+    const brandLower = brand.toLowerCase();
+    
+    if (isBrandNoise(brand)) continue;
+    if (!isLikelyBrand(brand)) continue;
+    if (brandLower === targetLower) continue;
+    if (brandLower.startsWith(targetLower + " ")) continue;
+    
+    mentionedBrands.add(brand);
+  }
+  
+  // Pattern 2 (fallback): Numbered list items that look like brand names
+  // Only use if bold extraction found very few results
+  if (mentionedBrands.size < 3) {
+    const listPattern = /\d+\.\s*\*?\*?([A-Z][A-Za-z\s&'.()-]+?)(?:\*?\*?\s*[-–—:]|\s*\n)/g;
+    while ((match = listPattern.exec(response)) !== null) {
       const brand = match[1].trim().replace(/\*+/g, "");
       const brandLower = brand.toLowerCase();
       
-      // Skip noise, target brand, and sub-brands of the target
-      if (brand.length < 2 || brand.length > 40) continue;
       if (isBrandNoise(brand)) continue;
+      if (!isLikelyBrand(brand)) continue;
       if (brandLower === targetLower) continue;
-      if (brandLower.startsWith(targetLower + " ")) continue; // e.g., "Saatva Classic" when target is "Saatva"
+      if (brandLower.startsWith(targetLower + " ")) continue;
       
       mentionedBrands.add(brand);
     }
@@ -193,12 +243,30 @@ function extractCitations(response: string): string[] {
   return [...new Set(matches)];
 }
 
-async function queryGemini(query: string): Promise<{ response: string }> {
-  // Using OpenAI SDK with Gemini model through proxy
+// System instruction that makes AI responses structured and brand-focused.
+// This is the KEY to accurate brand extraction — we tell the AI exactly what format to use.
+function getBrandExtractionSystemPrompt(category: string): string {
+  return `You are a consumer research assistant. When answering questions about products or services, always:
+
+1. Name specific BRANDS (company/product names) — never generic terms like "moisturizer", "platform", or ingredient names.
+2. Format each brand mention in bold like **BrandName** so they are easy to identify.
+3. Only mention brands that are actual companies/products in the ${category} category or closely related categories.
+4. Do NOT bold section headings, tips, ingredients, product attributes, or instructions — only actual brand/company names.
+5. Always respond in English.
+
+Example good response for "best CRM software":
+For small businesses, **HubSpot** offers a strong free tier. **Salesforce** dominates enterprise. **Pipedrive** is great for sales teams. **Zoho CRM** provides good value.
+
+Example BAD response (don't do this):
+**Strengths**: Good features. **Tip**: Start with free tier. **AI Features**: Built-in automation.`;
+}
+
+async function queryGemini(query: string, systemPrompt?: string): Promise<{ response: string }> {
   const client = new OpenAI();
   try {
     const response = await client.responses.create({
       model: "gemini_3_flash",
+      instructions: systemPrompt || "Always respond in English.",
       input: query,
     });
     const text = typeof response.output === 'string' 
@@ -211,12 +279,12 @@ async function queryGemini(query: string): Promise<{ response: string }> {
   }
 }
 
-async function queryChatGPT(query: string): Promise<{ response: string }> {
+async function queryChatGPT(query: string, systemPrompt?: string): Promise<{ response: string }> {
   const client = new OpenAI();
   try {
     const response = await client.responses.create({
       model: "gpt5_nano",
-      instructions: "Always respond in English.",
+      instructions: systemPrompt || "Always respond in English.",
       input: query,
     });
     const text = typeof response.output === 'string' 
@@ -229,12 +297,13 @@ async function queryChatGPT(query: string): Promise<{ response: string }> {
   }
 }
 
-async function queryClaude(query: string): Promise<{ response: string }> {
+async function queryClaude(query: string, systemPrompt?: string): Promise<{ response: string }> {
   const client = new Anthropic();
   try {
     const message = await client.messages.create({
       model: "claude_haiku_4_5",
       max_tokens: 1024,
+      system: systemPrompt || "Always respond in English.",
       messages: [{ role: "user", content: query }],
     });
     const text = message.content.map((c: any) => c.type === "text" ? c.text : "").join("");
@@ -261,9 +330,12 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
 export async function queryEngine(
   engine: EngineConfig,
   query: string,
-  targetBrand: string
+  targetBrand: string,
+  category: string = "general"
 ): Promise<EngineResult> {
-  const result = await engine.queryFn(query);
+  // Pass a category-aware system prompt to get structured brand mentions
+  const systemPrompt = getBrandExtractionSystemPrompt(category);
+  const result = await engine.queryFn(query, systemPrompt);
   const { mentionsBrand, mentionedBrands } = extractBrands(result.response, targetBrand);
   const sentiment = analyzeSentiment(result.response, targetBrand);
   const citations = extractCitations(result.response);

@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { runAudit } from "./engine/audit-runner";
-import { detectBrandFromUrl } from "./engine/brand-detection";
+import { detectBrandFromUrl, detectCategoryWithAI } from "./engine/brand-detection";
 import { auditRequestSchema } from "@shared/schema";
 
 export async function registerRoutes(
@@ -11,14 +11,30 @@ export async function registerRoutes(
 ): Promise<Server> {
   
   // Detect brand from URL (for the confirmation step)
+  // Also uses AI to infer the category if not in the known-domains list
   app.post("/api/detect", async (req, res) => {
     try {
       const { url } = req.body;
       if (!url) return res.status(400).json({ error: "URL required" });
       
       const detected = detectBrandFromUrl(url);
-      res.json(detected || { brand: "Unknown", category: "general" });
+      if (!detected) {
+        return res.json({ brand: "Unknown", category: "general" });
+      }
+      
+      // If we know the domain, return immediately
+      if (detected.category) {
+        return res.json(detected);
+      }
+      
+      // For unknown domains, use AI to infer the category
+      console.log(`[Detect] Unknown domain, using AI to infer category for ${detected.brand}`);
+      const aiCategory = await detectCategoryWithAI(url, detected.brand);
+      console.log(`[Detect] AI inferred category: "${aiCategory}"`);
+      
+      res.json({ brand: detected.brand, category: aiCategory });
     } catch (error: any) {
+      console.error("[Detect Error]", error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -28,10 +44,25 @@ export async function registerRoutes(
     try {
       const parsed = auditRequestSchema.safeParse(req.body);
       if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.issues });
+        return res.status(400).json({ error: "Invalid request: " + parsed.error.issues.map(i => i.message).join(", ") });
       }
       
-      const result = await runAudit(parsed.data);
+      const data = parsed.data;
+      
+      // If category is missing or generic, auto-detect it with AI
+      if (!data.category || data.category === "general" || data.category.trim() === "") {
+        const detected = detectBrandFromUrl(data.url);
+        if (detected?.category) {
+          data.category = detected.category;
+        } else {
+          const brandName = data.brandName || detected?.brand || "";
+          console.log(`[Audit] No category provided, using AI to detect for ${brandName}`);
+          data.category = await detectCategoryWithAI(data.url, brandName);
+          console.log(`[Audit] AI detected category: "${data.category}"`);
+        }
+      }
+      
+      const result = await runAudit(data);
       
       // Save to database for historical tracking
       // engineResults stores { perEngine, dimensions } so the GET endpoint can reconstruct the full scores object

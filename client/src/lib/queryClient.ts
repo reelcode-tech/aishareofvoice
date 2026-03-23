@@ -4,7 +4,23 @@ const API_BASE = "__PORT_5000__".startsWith("__") ? "" : "__PORT_5000__";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const text = (await res.text()) || res.statusText;
+    let text = "";
+    try {
+      const raw = await res.text();
+      // Try to parse as JSON for structured error messages
+      try {
+        const json = JSON.parse(raw);
+        text = json.error || json.message || raw;
+      } catch {
+        text = raw;
+      }
+    } catch {
+      text = res.statusText;
+    }
+    // Strip HTML — if the error is an HTML page, show a clean message
+    if (text.includes("<html") || text.includes("<style") || text.includes("<!DOCTYPE")) {
+      text = "Server error. Please try again.";
+    }
     throw new Error(`${res.status}: ${text}`);
   }
 }

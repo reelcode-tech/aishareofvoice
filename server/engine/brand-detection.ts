@@ -159,10 +159,78 @@ export function detectBrandFromUrl(url: string): { brand: string; category: stri
     let brand = parts[0];
     brand = brand.charAt(0).toUpperCase() + brand.slice(1);
     
-    // Never return "general" — return empty string so UI prompts user to specify
+    // Return empty category — will be inferred by AI in detectCategoryWithAI()
     return { brand, category: "" };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Use AI to infer the business category when we can't detect it from the domain.
+ * Fetches the homepage, then asks an LLM to categorize the business.
+ */
+export async function detectCategoryWithAI(url: string, brandName: string): Promise<string> {
+  const OpenAI = (await import("openai")).default;
+  const client = new OpenAI();
+  
+  try {
+    // Try to fetch homepage for context
+    let siteContext = "";
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const resp = await fetch(url.startsWith("http") ? url : `https://${url}`, {
+        signal: controller.signal,
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; ASOVBot/1.0)" },
+      });
+      clearTimeout(timeoutId);
+      if (resp.ok) {
+        const html = await resp.text();
+        // Extract title and meta description
+        const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/i);
+        const descMatch = html.match(/name="description"[^>]*content="([^"]*)"/i) ||
+                          html.match(/content="([^"]*)"[^>]*name="description"/i);
+        const title = titleMatch?.[1]?.trim() || "";
+        const desc = descMatch?.[1]?.trim() || "";
+        siteContext = `Website title: "${title}". Meta description: "${desc}".`;
+      }
+    } catch {
+      // Site may be bot-protected, that's fine
+    }
+    
+    const prompt = `What business category does the brand "${brandName}" belong to?
+
+URL: ${url}
+${siteContext}
+
+Important: Base your answer on your knowledge of the brand "${brandName}" first. Only use the website metadata as a secondary signal.
+
+Respond with ONLY the category name — a short, specific label like: skincare, mattresses, CRM software, jewelry, fashion, consulting, AI writing tools, ecommerce platform, project management, fitness equipment, pet supplies, payments processing, connected fitness, meal kits, etc.
+
+Do NOT explain. Just the category name, nothing else.`;
+
+    const response = await client.responses.create({
+      model: "gpt5_nano",
+      input: prompt,
+    });
+    
+    const text = (typeof response.output === 'string' 
+      ? response.output 
+      : response.output_text || "").trim().toLowerCase();
+    
+    // Clean up the response — strip quotes, periods, explanations
+    const cleaned = text.replace(/^["']+|["']+$/g, "").replace(/\.\s*$/, "").trim();
+    
+    // Only accept short, clean category names (not full sentences)
+    if (cleaned && cleaned.split(/\s+/).length <= 5 && cleaned.length < 50) {
+      return cleaned;
+    }
+    
+    return "general";
+  } catch (err: any) {
+    console.error("[Category Detection] AI fallback failed:", err.message);
+    return "general";
   }
 }
 

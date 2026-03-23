@@ -43,7 +43,7 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
   const [geoAudit, ...engineResults] = await Promise.all([
     runGeoAudit(url),
     ...engines.flatMap(engine =>
-      queries.map(q => queryEngine(engine, q.query, brandName))
+      queries.map(q => queryEngine(engine, q.query, brandName, category))
     ),
   ]);
   
