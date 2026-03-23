@@ -39,13 +39,13 @@ export default function Landing() {
       {/* Hero */}
       <section className="max-w-6xl mx-auto px-6 pt-20 pb-16">
         <div className="max-w-3xl">
-          <h1 className="text-xl font-bold tracking-tight leading-tight mb-4" data-testid="hero-heading">
+          <h1 className="text-2xl font-bold tracking-tight leading-tight mb-5" data-testid="hero-heading">
             The AI recommendation engine is the new front page.
           </h1>
-          <p className="text-base text-muted-foreground leading-relaxed mb-3 max-w-2xl">
+          <p className="text-lg text-foreground/80 leading-relaxed mb-3 max-w-2xl">
             Your customers are asking ChatGPT, Gemini, and Claude for advice. If you aren't the answer, your competitor is.
           </p>
-          <p className="text-base text-muted-foreground leading-relaxed mb-8 max-w-2xl">
+          <p className="text-base text-foreground/60 leading-relaxed mb-8 max-w-2xl">
             Measure your brand's AI Share of Voice — how often AI recommends you versus competitors across real consumer queries.
           </p>
 
@@ -68,14 +68,14 @@ export default function Landing() {
           </form>
 
           {/* Social proof */}
-          <div className="flex flex-wrap items-center gap-6 mt-6 text-sm text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-6 mt-6 text-sm text-foreground/60">
             <span className="flex items-center gap-1.5">
               <Shield className="w-4 h-4 text-primary" />
               Real API data from 3 AI engines
             </span>
             <span className="flex items-center gap-1.5">
               <BarChart3 className="w-4 h-4 text-primary" />
-              Statistical sampling methodology
+              Confidence intervals, not vanity scores
             </span>
             <span className="flex items-center gap-1.5">
               <TrendingUp className="w-4 h-4 text-primary" />
@@ -88,8 +88,8 @@ export default function Landing() {
       {/* Variability Section */}
       <section className="border-t border-border/40 bg-card/30">
         <div className="max-w-6xl mx-auto px-6 py-16">
-          <h2 className="text-lg font-semibold mb-2">AI answers vary. Ours account for it.</h2>
-          <p className="text-sm text-muted-foreground mb-8 max-w-2xl">
+          <h2 className="text-xl font-semibold mb-3">AI answers vary. Ours account for it.</h2>
+          <p className="text-base text-foreground/65 mb-8 max-w-2xl leading-relaxed">
             Research from SparkToro (2,961 runs, 600 volunteers) shows AI responses change 99%+ of the time. Single queries are meaningless. We run multiple queries across multiple engines and report probability ranges, not false precision.
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -111,8 +111,8 @@ export default function Landing() {
 
       {/* What Your Audit Includes */}
       <section className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-lg font-semibold mb-2">What your audit includes</h2>
-        <p className="text-sm text-muted-foreground mb-8">Every audit runs real queries against live AI engines and reports exactly what they said.</p>
+        <h2 className="text-xl font-semibold mb-3">What your audit includes</h2>
+        <p className="text-base text-foreground/65 mb-8">Every audit runs real queries against live AI engines and reports exactly what they said.</p>
         <div className="grid md:grid-cols-3 gap-4">
           {[
             {
@@ -148,8 +148,8 @@ export default function Landing() {
           ].map((card) => (
             <div key={card.title} className="bg-card border border-border/50 rounded-lg p-5">
               <div className="text-primary mb-3">{card.icon}</div>
-              <h3 className="text-sm font-semibold mb-2">{card.title}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{card.desc}</p>
+              <h3 className="text-base font-semibold mb-2">{card.title}</h3>
+              <p className="text-sm text-foreground/60 leading-relaxed">{card.desc}</p>
             </div>
           ))}
         </div>
@@ -158,7 +158,7 @@ export default function Landing() {
       {/* How It Works */}
       <section className="border-t border-border/40 bg-card/30">
         <div className="max-w-6xl mx-auto px-6 py-16">
-          <h2 className="text-lg font-semibold mb-8">How it works</h2>
+          <h2 className="text-xl font-semibold mb-8">How it works</h2>
           <div className="grid md:grid-cols-4 gap-6">
             {[
               { step: "1", title: "Enter URL", desc: "Paste your website. We auto-detect brand and category." },
@@ -171,8 +171,8 @@ export default function Landing() {
                   {item.step}
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold mb-1">{item.title}</h3>
-                  <p className="text-sm text-muted-foreground">{item.desc}</p>
+                  <h3 className="text-base font-semibold mb-1">{item.title}</h3>
+                  <p className="text-sm text-foreground/60">{item.desc}</p>
                 </div>
               </div>
             ))}
@@ -182,29 +182,29 @@ export default function Landing() {
 
       {/* Methodology */}
       <section className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-lg font-semibold mb-2">Methodology</h2>
-        <p className="text-sm text-muted-foreground mb-6 max-w-2xl">
-          We measure AI Share of Voice by querying multiple AI engines with real consumer-intent prompts and analyzing brand mentions with statistical rigor.
+        <h2 className="text-xl font-semibold mb-3">Methodology</h2>
+        <p className="text-base text-foreground/65 mb-6 max-w-2xl leading-relaxed">
+          We don't guess. We ask the same AI engines your customers use, with the same kinds of questions they ask, and measure who gets recommended.
         </p>
         <div className="grid md:grid-cols-2 gap-6 text-sm">
           <div>
-            <h3 className="font-semibold mb-2">Evidence Basis</h3>
-            <ul className="space-y-1.5 text-muted-foreground">
-              <li>&#8226; Multiple queries per audit (12-30 depending on tier)</li>
-              <li>&#8226; Multiple AI engines queried in parallel</li>
-              <li>&#8226; Wilson score confidence intervals for all visibility metrics</li>
-              <li>&#8226; Probability ranges reported, not point estimates</li>
-              <li>&#8226; Every result traceable to a specific query and AI response</li>
+            <h3 className="font-semibold mb-3 text-base">What we measure</h3>
+            <ul className="space-y-2 text-foreground/60">
+              <li>&#8226; Real purchase-intent queries (12-30 per audit, depending on tier)</li>
+              <li>&#8226; Multiple AI engines queried simultaneously — not just one</li>
+              <li>&#8226; Statistical confidence intervals on every metric (not vanity scores)</li>
+              <li>&#8226; Probability ranges, not fake precision</li>
+              <li>&#8226; Every data point traceable to a specific query and AI response</li>
             </ul>
           </div>
           <div>
-            <h3 className="font-semibold mb-2">Limitations</h3>
-            <ul className="space-y-1.5 text-muted-foreground">
-              <li>&#8226; AI responses are inherently variable (99%+ variation per SparkToro)</li>
-              <li>&#8226; Scores are directional signals, not absolute truth</li>
-              <li>&#8226; Results reflect a point in time — AI models update frequently</li>
+            <h3 className="font-semibold mb-3 text-base">What we're honest about</h3>
+            <ul className="space-y-2 text-foreground/60">
+              <li>&#8226; AI answers are volatile — ask the same question twice and get different results (99%+ of the time per SparkToro)</li>
+              <li>&#8226; Our scores are directional signals, not guarantees</li>
+              <li>&#8226; Results are a snapshot — AI models update constantly</li>
               <li>&#8226; Free tier uses 2 engines with fewer queries (wider confidence intervals)</li>
-              <li>&#8226; Brand extraction from AI prose has inherent parsing challenges</li>
+              <li>&#8226; No tool can perfectly parse brand names from AI prose</li>
             </ul>
           </div>
         </div>
@@ -213,8 +213,8 @@ export default function Landing() {
       {/* Bottom CTA */}
       <section className="border-t border-border/40 bg-card/30">
         <div className="max-w-6xl mx-auto px-6 py-16 text-center">
-          <h2 className="text-lg font-semibold mb-2">Some brands show up in AI. Others don't.</h2>
-          <p className="text-sm text-muted-foreground mb-6">Find out where you stand. Free audit takes 30 seconds.</p>
+          <h2 className="text-xl font-semibold mb-3">Some brands show up in AI. Others don't.</h2>
+          <p className="text-base text-foreground/60 mb-6">Find out where you stand. Free audit takes 30 seconds.</p>
           <form onSubmit={handleSubmit} className="flex gap-3 max-w-md mx-auto">
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
