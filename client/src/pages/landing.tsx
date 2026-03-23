@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, BarChart3, Shield, Zap, Globe, TrendingUp, Eye } from "lucide-react";
+import { Search, BarChart3, Shield, Zap, Globe, MessageSquare, Eye, Users } from "lucide-react";
 
 export default function Landing() {
   const [url, setUrl] = useState("");
@@ -29,10 +29,6 @@ export default function Landing() {
             </div>
             <span className="text-lg font-semibold tracking-tight" data-testid="logo-text">AIShareOfVoice</span>
           </div>
-          <nav className="flex items-center gap-6 text-sm text-muted-foreground">
-            <span className="hidden sm:inline">Methodology</span>
-            <span className="hidden sm:inline">Pricing</span>
-          </nav>
         </div>
       </header>
 
@@ -40,13 +36,13 @@ export default function Landing() {
       <section className="max-w-6xl mx-auto px-6 pt-20 pb-16">
         <div className="max-w-3xl">
           <h1 className="text-2xl font-bold tracking-tight leading-tight mb-5" data-testid="hero-heading">
-            The AI recommendation engine is the new front page.
+            Are AI tools recommending your brand — or your competitors?
           </h1>
           <p className="text-lg text-foreground/80 leading-relaxed mb-3 max-w-2xl">
-            Your customers are asking ChatGPT, Gemini, and Claude for advice. If you aren't the answer, your competitor is.
+            People now ask ChatGPT what to buy. We show whether your brand shows up in those answers.
           </p>
           <p className="text-base text-foreground/60 leading-relaxed mb-8 max-w-2xl">
-            Measure your brand's AI Share of Voice — how often AI recommends you versus competitors across real consumer queries.
+            We run real customer questions across ChatGPT, Gemini, and Claude — and track who gets recommended.
           </p>
 
           {/* URL Input */}
@@ -67,19 +63,15 @@ export default function Landing() {
             </Button>
           </form>
 
-          {/* Social proof */}
+          {/* Proof bullets */}
           <div className="flex flex-wrap items-center gap-6 mt-6 text-sm text-foreground/60">
             <span className="flex items-center gap-1.5">
               <Shield className="w-4 h-4 text-primary" />
-              Real API data from 3 AI engines
+              Live queries across ChatGPT, Gemini, and Claude
             </span>
             <span className="flex items-center gap-1.5">
               <BarChart3 className="w-4 h-4 text-primary" />
-              Confidence intervals, not vanity scores
-            </span>
-            <span className="flex items-center gap-1.5">
-              <TrendingUp className="w-4 h-4 text-primary" />
-              SparkToro-validated approach
+              Shows probability, not a single score
             </span>
           </div>
         </div>
@@ -88,21 +80,19 @@ export default function Landing() {
       {/* Variability Section */}
       <section className="border-t border-border/40 bg-card/30">
         <div className="max-w-6xl mx-auto px-6 py-16">
-          <h2 className="text-xl font-semibold mb-3">AI answers vary. Ours account for it.</h2>
+          <h2 className="text-xl font-semibold mb-3">Ask the same question twice, get different answers.</h2>
           <p className="text-base text-foreground/65 mb-8 max-w-2xl leading-relaxed">
-            Research from SparkToro (2,961 runs, 600 volunteers) shows AI responses change 99%+ of the time. Single queries are meaningless. We run multiple queries across multiple engines and report probability ranges, not false precision.
+            AI responses change 99% of the time. We measure that variation so you don't chase noise. Multiple queries, multiple engines, reported as a range — not false precision.
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {[
-              { value: "99%+", label: "Response variability", desc: "No two AI answers are identical" },
-              { value: "3", label: "AI engines", desc: "ChatGPT, Gemini, Claude" },
-              { value: "12-30", label: "Queries per audit", desc: "Depends on tier" },
-              { value: "0", label: "Made-up data", desc: "Every result is traceable" },
+              { value: "We test real buying questions", desc: "The same queries your customers type into ChatGPT, Gemini, and Claude." },
+              { value: "We run them across multiple AI tools", desc: "Each engine recommends differently. We test them all." },
+              { value: "We show how often you're recommended", desc: "Reported as a range, because a single number would be misleading." },
             ].map((stat) => (
-              <div key={stat.label} className="bg-card border border-border/50 rounded-lg p-4">
-                <div className="text-xl font-bold text-primary mb-1">{stat.value}</div>
-                <div className="text-sm font-medium mb-0.5">{stat.label}</div>
-                <div className="text-xs text-muted-foreground">{stat.desc}</div>
+              <div key={stat.value} className="bg-card border border-border/50 rounded-lg p-4">
+                <div className="text-sm font-semibold text-foreground mb-1">{stat.value}</div>
+                <div className="text-sm text-foreground/55">{stat.desc}</div>
               </div>
             ))}
           </div>
@@ -111,39 +101,39 @@ export default function Landing() {
 
       {/* What Your Audit Includes */}
       <section className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-xl font-semibold mb-3">What your audit includes</h2>
-        <p className="text-base text-foreground/65 mb-8">Every audit runs real queries against live AI engines and reports exactly what they said.</p>
+        <h2 className="text-xl font-semibold mb-3">What your audit shows you</h2>
+        <p className="text-base text-foreground/65 mb-8">Every result traces back to a real AI query and a real AI response.</p>
         <div className="grid md:grid-cols-3 gap-4">
           {[
             {
               icon: <Eye className="w-5 h-5" />,
-              title: "Signal Strength",
-              desc: "Probability range showing how likely AI mentions your brand, with Wilson confidence intervals. Not a vanity score — a statistical measurement.",
+              title: "How often AI recommends you",
+              desc: "Your recommendation rate across all queries, reported as a probability range — not a vanity score.",
             },
             {
-              icon: <Search className="w-5 h-5" />,
-              title: "Conversation Laboratory",
-              desc: "See the actual queries consumers ask and what AI said. Every response is an expandable card showing who was recommended instead of you, and why.",
+              icon: <MessageSquare className="w-5 h-5" />,
+              title: "The exact questions and answers",
+              desc: "See what consumers asked, what AI said, and who got recommended instead of you. Every response is expandable.",
             },
             {
-              icon: <BarChart3 className="w-5 h-5" />,
-              title: "Competitive Archetypes",
-              desc: "Your competitors mapped as Dominant, Established, Consistent, or Emerging — with strategic labels based on their AI presence.",
+              icon: <Users className="w-5 h-5" />,
+              title: "Who shows up most often",
+              desc: "Your competitors ranked by how frequently AI mentions them. See who's winning and by how much.",
             },
             {
               icon: <Shield className="w-5 h-5" />,
-              title: "AI Readiness Audit",
-              desc: "Technical scan of your llms.txt, schema markup, AI crawler access, and content depth — the signals AI engines use to decide whether to recommend you.",
+              title: "Why AI does or doesn't pick you",
+              desc: "Technical scan of your site: llms.txt, schema, crawler access, content depth. Ranked by impact on your visibility.",
             },
             {
               icon: <Zap className="w-5 h-5" />,
-              title: "Smart Recommendations",
-              desc: "Context-aware fixes that check your actual site before recommending. No generic advice — each recommendation explains why it matters for your specific situation.",
+              title: "What to fix first",
+              desc: "Prioritized recommendations with examples. Not generic advice — each one checks your actual site before suggesting.",
             },
             {
               icon: <Globe className="w-5 h-5" />,
-              title: "Multi-Language Support",
-              desc: "Run audits in 8 languages to match how your market searches. AI responds differently in Spanish, French, German, Portuguese, Japanese, Korean, and Chinese.",
+              title: "How AI sees you in 8 languages",
+              desc: "AI recommends differently in Spanish, French, German, Portuguese, Japanese, Korean, and Chinese. Test your real markets.",
             },
           ].map((card) => (
             <div key={card.title} className="bg-card border border-border/50 rounded-lg p-5">
@@ -159,12 +149,11 @@ export default function Landing() {
       <section className="border-t border-border/40 bg-card/30">
         <div className="max-w-6xl mx-auto px-6 py-16">
           <h2 className="text-xl font-semibold mb-8">How it works</h2>
-          <div className="grid md:grid-cols-4 gap-6">
+          <div className="grid md:grid-cols-3 gap-6">
             {[
-              { step: "1", title: "Enter URL", desc: "Paste your website. We auto-detect brand and category." },
-              { step: "2", title: "Confirm details", desc: "Edit brand name, category, and add custom competitors." },
-              { step: "3", title: "AI engines run", desc: "Real queries hit ChatGPT, Gemini, and Claude in parallel." },
-              { step: "4", title: "Get your report", desc: "Signal strength, conversation cards, competitive map, and recommendations." },
+              { step: "1", title: "Enter your URL", desc: "We detect your brand and category automatically." },
+              { step: "2", title: "AI engines run", desc: "Real buying questions hit ChatGPT, Gemini, and Claude in parallel." },
+              { step: "3", title: "See who gets recommended", desc: "Your visibility rate, competitor map, and what to fix — in under a minute." },
             ].map((item) => (
               <div key={item.step} className="flex gap-3">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-sm font-semibold text-primary">
@@ -180,58 +169,26 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Methodology */}
-      <section className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-xl font-semibold mb-3">Methodology</h2>
-        <p className="text-base text-foreground/65 mb-6 max-w-2xl leading-relaxed">
-          We don't guess. We ask the same AI engines your customers use, with the same kinds of questions they ask, and measure who gets recommended.
-        </p>
-        <div className="grid md:grid-cols-2 gap-6 text-sm">
-          <div>
-            <h3 className="font-semibold mb-3 text-base">What we measure</h3>
-            <ul className="space-y-2 text-foreground/60">
-              <li>&#8226; Real purchase-intent queries (12-30 per audit, depending on tier)</li>
-              <li>&#8226; Multiple AI engines queried simultaneously — not just one</li>
-              <li>&#8226; Statistical confidence intervals on every metric (not vanity scores)</li>
-              <li>&#8226; Probability ranges, not fake precision</li>
-              <li>&#8226; Every data point traceable to a specific query and AI response</li>
-            </ul>
-          </div>
-          <div>
-            <h3 className="font-semibold mb-3 text-base">What we're honest about</h3>
-            <ul className="space-y-2 text-foreground/60">
-              <li>&#8226; AI answers are volatile — ask the same question twice and get different results (99%+ of the time per SparkToro)</li>
-              <li>&#8226; Our scores are directional signals, not guarantees</li>
-              <li>&#8226; Results are a snapshot — AI models update constantly</li>
-              <li>&#8226; Free tier uses 2 engines with fewer queries (wider confidence intervals)</li>
-              <li>&#8226; No tool can perfectly parse brand names from AI prose</li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
       {/* Bottom CTA */}
-      <section className="border-t border-border/40 bg-card/30">
-        <div className="max-w-6xl mx-auto px-6 py-16 text-center">
-          <h2 className="text-xl font-semibold mb-3">Some brands show up in AI. Others don't.</h2>
-          <p className="text-base text-foreground/60 mb-6">Find out where you stand. Free audit takes 30 seconds.</p>
-          <form onSubmit={handleSubmit} className="flex gap-3 max-w-md mx-auto">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="Enter your website URL"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                className="pl-10 h-11 bg-card border-border"
-                data-testid="url-input-bottom"
-              />
-            </div>
-            <Button type="submit" className="h-11 px-6" data-testid="analyze-button-bottom">
-              Analyze
-            </Button>
-          </form>
-        </div>
+      <section className="max-w-6xl mx-auto px-6 py-16 text-center">
+        <h2 className="text-xl font-semibold mb-3">In the era of AI answers, being invisible is being irrelevant.</h2>
+        <p className="text-base text-foreground/60 mb-6">Find out where you stand. Takes 30 seconds.</p>
+        <form onSubmit={handleSubmit} className="flex gap-3 max-w-md mx-auto">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Enter your website URL"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              className="pl-10 h-11 bg-card border-border"
+              data-testid="url-input-bottom"
+            />
+          </div>
+          <Button type="submit" className="h-11 px-6" data-testid="analyze-button-bottom">
+            Analyze
+          </Button>
+        </form>
       </section>
 
       {/* Footer */}

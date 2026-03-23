@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Loader2, Plus, X, Globe } from "lucide-react";
+import { ArrowLeft, Loader2, Plus, X, Globe, AlertCircle } from "lucide-react";
 
 const LANGUAGES = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -18,6 +18,12 @@ const LANGUAGES = [
   { code: "ja", label: "日本語", flag: "🇯🇵" },
   { code: "ko", label: "한국어", flag: "🇰🇷" },
   { code: "zh", label: "中文", flag: "🇨🇳" },
+];
+
+const SUGGESTED_CATEGORIES = [
+  "skincare", "beauty", "mattresses", "fashion", "jewelry",
+  "CRM software", "project management", "ecommerce", "electronics",
+  "home appliances", "personal care", "consulting", "productivity",
 ];
 
 export default function AuditForm() {
@@ -33,6 +39,7 @@ export default function AuditForm() {
   const [customCompetitors, setCustomCompetitors] = useState<string[]>([]);
   const [newCompetitor, setNewCompetitor] = useState("");
   const [detected, setDetected] = useState(false);
+  const [categoryTouched, setCategoryTouched] = useState(false);
   
   // Auto-detect brand from URL
   const detectMutation = useMutation({
@@ -42,7 +49,10 @@ export default function AuditForm() {
     },
     onSuccess: (data) => {
       setBrandName(data.brand || "");
-      setCategory(data.category || "general");
+      // Only set category if backend returned a real one (not empty)
+      if (data.category && data.category !== "general") {
+        setCategory(data.category);
+      }
       setDetected(true);
     },
   });
@@ -70,6 +80,8 @@ export default function AuditForm() {
       navigate(`/results/${data.id}`);
     },
   });
+
+  const missingCategory = !category.trim();
   
   const addCompetitor = () => {
     if (newCompetitor.trim() && !customCompetitors.includes(newCompetitor.trim())) {
@@ -103,7 +115,7 @@ export default function AuditForm() {
       <div className="max-w-3xl mx-auto px-6 py-12">
         <h1 className="text-xl font-bold mb-2" data-testid="form-heading">Confirm Audit Details</h1>
         <p className="text-sm text-muted-foreground mb-8">
-          We detected your brand from the URL. Edit if needed, then run the audit.
+          We detected your brand from the URL. Confirm your category so we ask the right questions.
         </p>
 
         <div className="space-y-6">
@@ -132,17 +144,48 @@ export default function AuditForm() {
             />
           </div>
 
-          {/* Category */}
+          {/* Category — required, with suggestions */}
           <div>
-            <Label htmlFor="category" className="text-sm font-medium mb-1.5 block">Category</Label>
+            <Label htmlFor="category" className="text-sm font-medium mb-1.5 block">
+              Category <span className="text-orange-400">*</span>
+            </Label>
             <Input
               id="category"
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(e) => { setCategory(e.target.value); setCategoryTouched(true); }}
+              onBlur={() => setCategoryTouched(true)}
               placeholder="e.g. skincare, mattresses, CRM software"
-              className="bg-card"
+              className={`bg-card ${
+                categoryTouched && missingCategory ? "border-orange-400/60 focus-visible:ring-orange-400/40" : ""
+              }`}
               data-testid="input-category"
             />
+            {categoryTouched && missingCategory && (
+              <div className="flex items-start gap-1.5 mt-2">
+                <AlertCircle className="w-3.5 h-3.5 text-orange-400 mt-0.5 shrink-0" />
+                <p className="text-xs text-orange-400">
+                  Category is required. It determines which questions we ask AI about your brand.
+                </p>
+              </div>
+            )}
+            {/* Quick-pick suggestions */}
+            {missingCategory && (
+              <div className="mt-2.5">
+                <p className="text-xs text-muted-foreground mb-1.5">Quick pick:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {SUGGESTED_CATEGORIES.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => { setCategory(cat); setCategoryTouched(true); }}
+                      className="px-2.5 py-1 rounded-md text-xs border border-border/50 bg-card hover:border-primary/50 hover:text-primary transition-colors"
+                      data-testid={`category-quick-${cat.replace(/\s+/g, '-').toLowerCase()}`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Language */}
@@ -205,15 +248,15 @@ export default function AuditForm() {
             )}
           </div>
 
-          {/* Tier Selection */}
+          {/* Tier Selection — value-based, not engine-based */}
           <div>
-            <Label className="text-sm font-medium mb-1.5 block">Audit Tier</Label>
+            <Label className="text-sm font-medium mb-1.5 block">Audit Depth</Label>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { id: "free", label: "Free", engines: "2 engines", queries: "12 queries", price: "$0" },
-                { id: "pro", label: "Pro", engines: "3 engines", queries: "20 queries", price: "$29" },
-                { id: "business", label: "Business", engines: "4 engines", queries: "25 queries", price: "$99" },
-                { id: "enterprise", label: "Enterprise", engines: "5 engines", queries: "30 queries", price: "$299" },
+                { id: "free", label: "Starter", line1: "Quick snapshot", line2: "12 AI queries", price: "Free" },
+                { id: "pro", label: "Growth", line1: "Full visibility scan", line2: "20 queries, 3 AI engines", price: "$29" },
+                { id: "business", label: "Pro", line1: "Deep competitive intel", line2: "25 queries, weekly tracking", price: "$99" },
+                { id: "enterprise", label: "Enterprise", line1: "Ongoing optimization", line2: "30 queries, daily alerts", price: "$299" },
               ].map(t => (
                 <button
                   key={t.id}
@@ -226,8 +269,8 @@ export default function AuditForm() {
                   data-testid={`tier-${t.id}`}
                 >
                   <div className="text-sm font-semibold">{t.label}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">{t.engines}</div>
-                  <div className="text-xs text-muted-foreground">{t.queries}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{t.line1}</div>
+                  <div className="text-xs text-muted-foreground">{t.line2}</div>
                   <div className="text-xs font-semibold text-primary mt-1">{t.price}</div>
                 </button>
               ))}
@@ -236,7 +279,14 @@ export default function AuditForm() {
 
           {/* Submit */}
           <Button
-            onClick={() => auditMutation.mutate()}
+            onClick={() => {
+              if (missingCategory) {
+                setCategoryTouched(true);
+                document.getElementById("category")?.focus();
+                return;
+              }
+              auditMutation.mutate();
+            }}
             disabled={auditMutation.isPending || !url || !brandName}
             className="w-full h-12 text-base"
             data-testid="button-run-audit"
@@ -244,10 +294,10 @@ export default function AuditForm() {
             {auditMutation.isPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Running {tier === "free" ? "Free" : tier.charAt(0).toUpperCase() + tier.slice(1)} Audit...
+                Analyzing AI visibility...
               </>
             ) : (
-              `Run ${tier === "free" ? "Free" : tier.charAt(0).toUpperCase() + tier.slice(1)} Audit`
+              "Run AI Visibility Audit"
             )}
           </Button>
           

@@ -6,6 +6,72 @@ import type { EngineResult } from "./ai-engines";
 import type { GeoAuditResult } from "./geo-audit";
 import { normalizeBrandName, isServiceBrand } from "./brand-detection";
 
+// Cross-category brands that appear in AI responses regardless of category
+// These are mega-brands that get mentioned everywhere as examples/comparisons
+const CROSS_CATEGORY_NOISE: Record<string, string[]> = {
+  skincare: ["Apple", "Nike", "Samsung", "Google", "Amazon", "Microsoft", "Tesla", "Sony", "Casper", "Purple", "Saatva", "HubSpot", "Salesforce", "Slack", "Notion", "Monday.com", "Dyson"],
+  beauty: ["Apple", "Nike", "Samsung", "Google", "Amazon", "Microsoft", "Tesla", "Sony", "Casper", "Purple", "Saatva", "HubSpot", "Salesforce", "Slack", "Notion", "Monday.com", "Dyson"],
+  mattresses: ["Apple", "Nike", "Samsung", "Google", "Amazon", "Microsoft", "Tesla", "Sony", "CeraVe", "The Ordinary", "Glossier", "HubSpot", "Salesforce", "Slack", "Notion", "Monday.com", "Sephora"],
+  jewelry: ["Apple", "Nike", "Samsung", "Google", "Amazon", "Microsoft", "Tesla", "Sony", "Casper", "HubSpot", "Salesforce", "CeraVe", "Dyson"],
+  fashion: ["Apple", "Samsung", "Google", "Amazon", "Microsoft", "Tesla", "Sony", "Casper", "HubSpot", "Salesforce", "CeraVe", "Dyson"],
+  electronics: ["CeraVe", "The Ordinary", "Glossier", "Casper", "Purple", "Saatva", "HubSpot", "Salesforce", "Sephora", "Tiffany & Co.", "Mejuri", "Zara"],
+  "CRM software": ["Apple", "Nike", "Samsung", "Google", "Tesla", "Sony", "CeraVe", "Casper", "Sephora", "Tiffany & Co.", "Zara", "Glossier"],
+  "project management": ["Apple", "Nike", "Samsung", "Google", "Tesla", "Sony", "CeraVe", "Casper", "Sephora", "Tiffany & Co.", "Zara", "Glossier"],
+  consulting: ["Apple", "Nike", "Samsung", "Google", "Tesla", "Sony", "CeraVe", "Casper", "Sephora", "Glossier", "Zara"],
+  "home appliances": ["CeraVe", "The Ordinary", "Glossier", "Casper", "Purple", "Saatva", "HubSpot", "Salesforce", "Sephora", "Tiffany & Co.", "Mejuri", "Zara", "Nike"],
+  "personal care": ["Apple", "Samsung", "Google", "Microsoft", "Tesla", "Sony", "Casper", "Purple", "Saatva", "HubSpot", "Salesforce", "Slack", "Notion"],
+  ecommerce: ["CeraVe", "The Ordinary", "Casper", "Purple", "Saatva", "Tiffany & Co.", "Mejuri"],
+  productivity: ["Apple", "Nike", "Samsung", "Tesla", "Sony", "CeraVe", "Casper", "Sephora", "Tiffany & Co.", "Zara", "Glossier"],
+};
+
+// Generic mega-brands that show up everywhere — filter if they're not in the same industry
+const UNIVERSAL_MEGABRANDS = new Set([
+  "Apple", "Google", "Amazon", "Microsoft", "Samsung", "Nike", "Tesla", "Sony",
+  "Meta", "Facebook", "Netflix", "Spotify", "Uber", "Airbnb",
+]);
+
+/**
+ * Filter competitors to only include brands relevant to the given category.
+ * Removes cross-category noise (e.g., Apple showing up in skincare results).
+ */
+function filterCategoryRelevantCompetitors(
+  competitors: CompetitorData[],
+  category: string,
+  brandName: string
+): CompetitorData[] {
+  const normalizedCategory = category.toLowerCase();
+  
+  // Build the noise list for this category
+  let noiseSet = new Set<string>();
+  
+  // Check for exact or fuzzy category match in CROSS_CATEGORY_NOISE
+  for (const [cat, noiseBrands] of Object.entries(CROSS_CATEGORY_NOISE)) {
+    if (normalizedCategory.includes(cat.toLowerCase()) || cat.toLowerCase().includes(normalizedCategory)) {
+      noiseSet = new Set(noiseBrands.map(b => b.toLowerCase()));
+      break;
+    }
+  }
+  
+  // If no specific noise list found, use universal megabrands as fallback
+  // (if the category doesn't match tech/electronics)
+  if (noiseSet.size === 0) {
+    const isTechCategory = ["tech", "electronics", "software", "computer", "phone", "device"].some(
+      k => normalizedCategory.includes(k)
+    );
+    if (!isTechCategory) {
+      noiseSet = new Set([...UNIVERSAL_MEGABRANDS].map(b => b.toLowerCase()));
+    }
+  }
+  
+  return competitors.filter(c => {
+    const lowerName = c.name.toLowerCase();
+    // Never filter out the brand itself
+    if (lowerName === brandName.toLowerCase()) return true;
+    // Filter out noise brands
+    return !noiseSet.has(lowerName);
+  });
+}
+
 interface CompetitorData {
   name: string;
   mentionRate: number;
@@ -139,7 +205,7 @@ export function calculateScores(
   }
   
   const uniqueQueries = queryGroups.size;
-  const competitors: CompetitorData[] = Array.from(competitorMentions.entries())
+  const rawCompetitors: CompetitorData[] = Array.from(competitorMentions.entries())
     .map(([name, count]) => ({
       name,
       mentionCount: count,
@@ -147,7 +213,10 @@ export function calculateScores(
       mentionRate: Math.round((count / Math.max(totalQueries, 1)) * 1000) / 10,
       archetype: getArchetype(Math.round((count / Math.max(totalQueries, 1)) * 100)),
     }))
-    .sort((a, b) => b.mentionRate - a.mentionRate)
+    .sort((a, b) => b.mentionRate - a.mentionRate);
+  
+  // Filter out cross-category noise (e.g., Apple in skincare, Nike in mattresses)
+  const competitors = filterCategoryRelevantCompetitors(rawCompetitors, category, brandName)
     .slice(0, 10);
   
   // Sentiment breakdown

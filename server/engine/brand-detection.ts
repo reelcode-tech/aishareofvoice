@@ -82,12 +82,23 @@ const NOISE_WORDS = new Set([
   "top", "quality", "high", "low", "good", "great", "amazing", "excellent",
   "mixed", "mostly", "widely", "generally", "particularly", "especially",
   "however", "although", "furthermore", "additionally", "important",
+  // Generic product terms that AI mentions as categories, not brands
+  "moisturizer", "sunscreen", "cleanser", "serum", "toner", "retinol",
+  "mattress", "pillow", "topper", "bedding", "sheets",
+  "morning", "evening", "daily", "nightly", "routine",
+  "lightweight", "hydrating", "brightening", "anti-aging", "sensitive",
+  "budget", "drugstore", "high-end", "mid-range", "starter",
+  "alternative", "competitor", "comparison", "review", "recommendation",
 ]);
 
 const NOISE_PHRASES = [
   "mixed reviews", "widely used", "mostly positive", "quality testing",
   "cruelty-free", "board certified", "dermatologist recommended",
   "clinically proven", "all natural", "clean beauty",
+  "prone skin", "dry skin", "oily skin", "sensitive skin", "combination skin",
+  "uv clear", "ultra sheer", "broad spectrum",
+  "side sleeper", "back sleeper", "hot sleeper",
+  "small business", "sales team", "customer service",
 ];
 
 export function normalizeBrandName(raw: string): string | null {
@@ -148,7 +159,8 @@ export function detectBrandFromUrl(url: string): { brand: string; category: stri
     let brand = parts[0];
     brand = brand.charAt(0).toUpperCase() + brand.slice(1);
     
-    return { brand, category: "general" };
+    // Never return "general" — return empty string so UI prompts user to specify
+    return { brand, category: "" };
   } catch {
     return null;
   }
