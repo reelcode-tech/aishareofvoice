@@ -321,7 +321,8 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
     { name: "Claude", tier: "pro", queryFn: queryClaude, model: "claude_haiku_4_5" },
   ];
   
-  const tierOrder = ["free", "pro", "business", "enterprise"];
+  // Updated tiers: Free (2 engines), Pro (3 engines), Enterprise (3 engines + more queries)
+  const tierOrder = ["free", "pro", "enterprise"];
   const tierIndex = tierOrder.indexOf(tier);
   
   return engines.filter(e => tierOrder.indexOf(e.tier) <= tierIndex);

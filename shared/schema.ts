@@ -8,7 +8,7 @@ export const audits = sqliteTable("audits", {
   brandName: text("brand_name").notNull(),
   brandUrl: text("brand_url").notNull(),
   category: text("category").notNull(),
-  tier: text("tier").notNull().default("free"), // free | pro | business | enterprise
+  tier: text("tier").notNull().default("free"), // free | pro | enterprise
   language: text("language").notNull().default("en"),
   overallScore: integer("overall_score"), // 0-100
   overallGrade: text("overall_grade"),
@@ -40,7 +40,7 @@ export const auditRequestSchema = z.object({
   url: z.string().url().or(z.string().min(3)),
   brandName: z.string().optional(),
   category: z.string().optional(),
-  tier: z.enum(["free", "pro", "business", "enterprise"]).default("free"),
+  tier: z.enum(["free", "pro", "enterprise"]).default("free"),
   language: z.string().default("en"),
   customCompetitors: z.array(z.string()).optional(),
 });

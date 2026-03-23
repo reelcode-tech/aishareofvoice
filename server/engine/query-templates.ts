@@ -77,6 +77,20 @@ const CATEGORY_QUERIES: Record<string, QueryTemplate[]> = {
     { query: "best {category} for everyday wear", intent: "purchase" },
     { query: "luxury {category} brands worth it", intent: "research" },
   ],
+  "athletic apparel": [
+    { query: "best athletic wear brands 2026", intent: "recommendation" },
+    { query: "best yoga pants brands", intent: "purchase" },
+    { query: "{brand} vs competitors which is better", intent: "comparison" },
+    { query: "best workout clothes for women", intent: "purchase" },
+    { query: "{brand} review worth the price", intent: "research" },
+    { query: "alternatives to {brand}", intent: "alternative" },
+    { query: "best running gear brands 2026", intent: "recommendation" },
+    { query: "best leggings that don't pill", intent: "purchase" },
+    { query: "is {brand} worth it 2026", intent: "research" },
+    { query: "premium activewear brands comparison", intent: "comparison" },
+    { query: "best gym clothes for men", intent: "purchase" },
+    { query: "sustainable athletic wear brands", intent: "recommendation" },
+  ],
   consulting: [
     { query: "best consulting firms 2026", intent: "recommendation" },
     { query: "top management consulting companies", intent: "recommendation" },
@@ -244,9 +258,10 @@ export function getQueriesForBrand(
   brand: string,
   category: string,
   language: string = "en",
-  tier: "free" | "pro" | "business" | "enterprise" = "free"
+  tier: "free" | "pro" | "enterprise" = "free"
 ): { query: string; intent: string }[] {
-  const queryLimit = tier === "free" ? 12 : tier === "pro" ? 20 : tier === "business" ? 25 : 30;
+  // Updated tier query limits: Free=12, Pro=25, Enterprise=30
+  const queryLimit = tier === "free" ? 12 : tier === "pro" ? 25 : 30;
   
   // For non-English languages, use the natively-written templates
   if (language !== "en" && MULTILANG_QUERIES[language]) {

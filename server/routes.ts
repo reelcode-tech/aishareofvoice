@@ -40,6 +40,54 @@ export async function registerRoutes(
     }
   });
   
+  // Combined detect + competitor discovery — single call, parallel execution
+  // Returns brand, category (with confidence), AND competitors in one shot
+  app.post("/api/detect-all", async (req, res) => {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: "URL required" });
+      
+      const detected = detectBrandFromUrl(url);
+      const brand = detected?.brand || "Unknown";
+      
+      // For known domains: we already have brand + category, just need competitors
+      if (detected?.category) {
+        console.log(`[DetectAll] Known domain ${brand} in ${detected.category}, fetching competitors...`);
+        const competitors = await discoverCompetitors(brand, detected.category, url);
+        return res.json({
+          brand,
+          category: detected.category,
+          categoryConfidence: "high",
+          categoryReason: `${brand} is a well-known brand in this space`,
+          categorySource: "known_domain",
+          competitors,
+        });
+      }
+      
+      // For unknown domains: run category detection first, then competitors with the correct category
+      // This avoids the wasteful pattern of running broad competitors and then re-running
+      console.log(`[DetectAll] Unknown domain — detecting category for ${brand}...`);
+      const aiResult = await detectCategoryWithAI(url, brand);
+      console.log(`[DetectAll] Category detected: "${aiResult.category}" (${aiResult.confidence}). Now discovering competitors...`);
+      
+      // Now discover competitors with the correct category
+      const competitors = await discoverCompetitors(brand, aiResult.category || "general", url);
+      console.log(`[DetectAll] Found ${competitors.length} competitors`);
+      
+      res.json({
+        brand,
+        category: aiResult.category,
+        categoryConfidence: aiResult.confidence,
+        categoryReason: aiResult.reason,
+        categorySource: aiResult.source,
+        competitors,
+      });
+    } catch (error: any) {
+      console.error("[DetectAll Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Discover competitors for a brand+category (lightweight AI call)
   // This runs BEFORE the full audit so the user can review/edit the competitor set
   app.post("/api/discover-competitors", async (req, res) => {

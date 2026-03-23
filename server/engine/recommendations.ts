@@ -1,9 +1,17 @@
 // Smart Recommendations Engine
 // Context-aware: checks actual GEO audit data, explains WHY, gives examples and expected impact
+// Now includes full PLAYBOOK content: step-by-step instructions, copy-pasteable code, query-linked fixes
 
 import type { GeoAuditResult } from "./geo-audit";
 import type { ScoringResult } from "./scoring";
 import { isServiceBrand } from "./brand-detection";
+
+interface PlaybookStep {
+  step: number;
+  title: string;
+  description: string;
+  code?: string; // Copy-pasteable code/content
+}
 
 interface Recommendation {
   id: string;
@@ -15,6 +23,10 @@ interface Recommendation {
   effort: "easy" | "moderate" | "complex";
   locked: boolean;
   category: "ai_visibility" | "technical" | "content" | "competitive";
+  // NEW: Full playbook with step-by-step instructions
+  playbook?: PlaybookStep[];
+  // NEW: Which failing queries this recommendation addresses
+  linkedQueries?: string[];
 }
 
 export function generateRecommendations(
@@ -26,6 +38,20 @@ export function generateRecommendations(
 ): Recommendation[] {
   const recommendations: Recommendation[] = [];
   const isService = isServiceBrand(brandName, category);
+
+  // Collect queries where brand was NOT mentioned (for linking recs to failing queries)
+  const failingQueries = (scores as any).queryDetails
+    ?.filter((q: any) => !q.mentioned)
+    ?.map((q: any) => q.query)
+    ?.slice(0, 5) || [];
+
+  const purchaseQueries = failingQueries.filter((q: string) =>
+    q.toLowerCase().includes("best") || q.toLowerCase().includes("top") || q.toLowerCase().includes("recommend")
+  );
+
+  const comparisonQueries = failingQueries.filter((q: string) =>
+    q.toLowerCase().includes("vs") || q.toLowerCase().includes("comparison") || q.toLowerCase().includes("alternative")
+  );
   
   // llms.txt — the #1 thing most brands are missing
   if (!geoAudit.llmsTxt.exists) {
@@ -39,6 +65,25 @@ export function generateRecommendations(
       effort: "moderate",
       locked: false,
       category: "ai_visibility",
+      playbook: [
+        {
+          step: 1,
+          title: "Create the file",
+          description: `Create a new text file called \`llms.txt\` in your website's root directory (same level as robots.txt).`,
+          code: `# ${brandName}\n> ${isService ? `Leading ${category} provider known for [your key differentiator]` : `Premium ${category} brand specializing in [your focus area]`}\n\n## What we do\n${isService ? `We provide ${category} services that help [target customer] achieve [key outcome]. Our approach focuses on [unique methodology/approach].` : `We create ${category} products designed for [target customer]. Our products are known for [key differentiator — quality, innovation, sustainability, etc.].`}\n\n## Our ${isService ? "services" : "products"}\n- [${isService ? "Service" : "Product"} 1]: [One-line description with key benefit]\n- [${isService ? "Service" : "Product"} 2]: [One-line description with key benefit]\n- [${isService ? "Service" : "Product"} 3]: [One-line description with key benefit]\n\n## Why choose ${brandName}\n- [Differentiator 1: e.g., "10+ years of expertise in..."]\n- [Differentiator 2: e.g., "Used by 50,000+ customers..."]\n- [Differentiator 3: e.g., "Only brand that offers..."]\n\n## ${brandName} vs alternatives\n- Best for: [specific use case where you win]\n- Price range: [your positioning]\n- What sets us apart: [1-2 sentences]\n\n## FAQ\nQ: Is ${brandName} good for [common question]?\nA: [Direct, honest answer with specifics]\n\nQ: How does ${brandName} compare to [top competitor]?\nA: [Honest comparison highlighting your strengths]`,
+        },
+        {
+          step: 2,
+          title: "Deploy to your site root",
+          description: `Upload the file so it's accessible at \`${brandName.toLowerCase().replace(/\s+/g, "")}.com/llms.txt\`. Most hosting platforms let you put files in the public/root folder.`,
+        },
+        {
+          step: 3,
+          title: "Verify it works",
+          description: `Open your browser and go to your-domain.com/llms.txt — you should see the raw text content. Then re-run this audit in 2-4 weeks to measure the impact.`,
+        },
+      ],
+      linkedQueries: purchaseQueries.length > 0 ? purchaseQueries : failingQueries.slice(0, 3),
     });
   } else if (geoAudit.llmsTxt.quality === "minimal") {
     recommendations.push({
@@ -51,6 +96,26 @@ export function generateRecommendations(
       effort: "easy",
       locked: false,
       category: "ai_visibility",
+      playbook: [
+        {
+          step: 1,
+          title: "Add competitive positioning",
+          description: `Add a comparison section to your existing llms.txt that directly addresses how ${brandName} compares to alternatives. AI engines use this when answering "vs" and "alternative" queries.`,
+          code: `## ${brandName} vs alternatives\n- Best for: [your ideal customer/use case]\n- Price range: [your positioning — budget, mid-range, premium]\n- What sets us apart: [1-2 specific differentiators]\n\n## vs [Top Competitor Name]\n- Where ${brandName} wins: [specific advantage]\n- Where they win: [be honest — this builds credibility]\n- Best choice when: [specific scenario]`,
+        },
+        {
+          step: 2,
+          title: "Add FAQ answers",
+          description: `Add 3-5 frequently asked questions with direct answers. These map directly to the kinds of queries AI gets asked.`,
+          code: `## FAQ\nQ: Is ${brandName} worth it?\nA: [Honest answer with specific value proposition]\n\nQ: What is ${brandName} best for?\nA: [Specific use case and customer type]\n\nQ: How much does ${brandName} cost?\nA: [Price range or pricing model]`,
+        },
+        {
+          step: 3,
+          title: "Verify length and re-test",
+          description: `Your llms.txt should now be 30+ lines. Re-run this audit in 2-3 weeks to measure the impact on mention rate.`,
+        },
+      ],
+      linkedQueries: comparisonQueries.length > 0 ? comparisonQueries : failingQueries.slice(0, 3),
     });
   } else if (geoAudit.llmsTxt.quality === "good" || geoAudit.llmsTxt.quality === "excellent") {
     recommendations.push({
@@ -62,6 +127,14 @@ export function generateRecommendations(
       effort: "easy",
       locked: true,
       category: "ai_visibility",
+      playbook: [
+        {
+          step: 1,
+          title: "Add purchase-intent sections",
+          description: `Add content that matches how people ask AI for buying decisions — "best for X", pricing, and direct recommendations.`,
+          code: `## Best for\n- ${brandName} is ideal for: [specific customer profile]\n- Not ideal for: [who should look elsewhere — builds trust]\n\n## Pricing\n- [Plan/Product 1]: $XX — best for [use case]\n- [Plan/Product 2]: $XX — best for [use case]`,
+        },
+      ],
     });
   }
   
@@ -82,6 +155,29 @@ export function generateRecommendations(
       effort: "moderate",
       locked: false,
       category: "technical",
+      playbook: [
+        {
+          step: 1,
+          title: "Choose the right schema type",
+          description: isService
+            ? `As a ${category} business, use Organization and ProfessionalService schema. This tells AI you provide services, not products.`
+            : `As a ${category} brand, use Product and Brand schema. Add this to every product page.`,
+        },
+        {
+          step: 2,
+          title: "Add the schema to your pages",
+          description: `Paste this code into the <head> section of your ${isService ? "homepage" : "product pages"}. Replace the placeholder values with your actual data.`,
+          code: isService
+            ? `<script type="application/ld+json">\n{\n  "@context": "https://schema.org",\n  "@type": "ProfessionalService",\n  "name": "${brandName}",\n  "description": "[Your one-line description]",\n  "url": "[Your website URL]",\n  "areaServed": "[City/Region/Country]",\n  "serviceType": "${category}",\n  "provider": {\n    "@type": "Organization",\n    "name": "${brandName}",\n    "foundingDate": "[Year]",\n    "numberOfEmployees": "[Range like 50-200]"\n  },\n  "hasOfferCatalog": {\n    "@type": "OfferCatalog",\n    "name": "Services",\n    "itemListElement": [\n      {\n        "@type": "Offer",\n        "itemOffered": {\n          "@type": "Service",\n          "name": "[Service Name]",\n          "description": "[What it does]"\n        }\n      }\n    ]\n  }\n}\n</script>`
+            : `<script type="application/ld+json">\n{\n  "@context": "https://schema.org",\n  "@type": "Product",\n  "name": "[Product Name]",\n  "brand": {\n    "@type": "Brand",\n    "name": "${brandName}"\n  },\n  "description": "[Product description]",\n  "offers": {\n    "@type": "Offer",\n    "price": "[Price]",\n    "priceCurrency": "USD",\n    "availability": "https://schema.org/InStock"\n  },\n  "aggregateRating": {\n    "@type": "AggregateRating",\n    "ratingValue": "[e.g. 4.5]",\n    "reviewCount": "[e.g. 1200]"\n  }\n}\n</script>`,
+        },
+        {
+          step: 3,
+          title: "Validate your schema",
+          description: `Go to https://validator.schema.org and paste your page URL to confirm the schema is detected correctly. Fix any errors before moving on.`,
+        },
+      ],
+      linkedQueries: purchaseQueries.slice(0, 3),
     });
   } else {
     if (isService && !geoAudit.schema.hasOrganization && !geoAudit.schema.hasService) {
@@ -94,6 +190,14 @@ export function generateRecommendations(
         effort: "moderate",
         locked: true,
         category: "technical",
+        playbook: [
+          {
+            step: 1,
+            title: "Replace your current schema",
+            description: `Change your existing schema from ${geoAudit.schema.types.join("/")} to ProfessionalService. Keep the same placement in your HTML.`,
+            code: `<script type="application/ld+json">\n{\n  "@context": "https://schema.org",\n  "@type": "ProfessionalService",\n  "name": "${brandName}",\n  "serviceType": "${category}"\n}\n</script>`,
+          },
+        ],
       });
     } else if (!isService && !geoAudit.schema.hasProduct) {
       recommendations.push({
@@ -105,6 +209,14 @@ export function generateRecommendations(
         effort: "moderate",
         locked: true,
         category: "technical",
+        playbook: [
+          {
+            step: 1,
+            title: "Add Product schema to each product page",
+            description: `Add structured data with pricing, ratings, and availability for each product.`,
+            code: `<script type="application/ld+json">\n{\n  "@context": "https://schema.org",\n  "@type": "Product",\n  "name": "[Product Name]",\n  "brand": { "@type": "Brand", "name": "${brandName}" },\n  "offers": { "@type": "Offer", "price": "[Price]", "priceCurrency": "USD" },\n  "aggregateRating": { "@type": "AggregateRating", "ratingValue": "[4.5]", "reviewCount": "[1200]" }\n}\n</script>`,
+          },
+        ],
       });
     }
   }
@@ -121,6 +233,26 @@ export function generateRecommendations(
       effort: "easy",
       locked: false,
       category: "ai_visibility",
+      playbook: [
+        {
+          step: 1,
+          title: "Open your robots.txt file",
+          description: `Find the robots.txt file in your website root. You can see it at your-domain.com/robots.txt.`,
+        },
+        {
+          step: 2,
+          title: "Remove the AI crawler blocks",
+          description: `Find and remove (or change to Allow) these lines that are blocking AI crawlers:`,
+          code: geoAudit.robots.blockedCrawlers.map(c => 
+            `# REMOVE these lines:\nUser-agent: ${c}\nDisallow: /\n\n# REPLACE with:\nUser-agent: ${c}\nAllow: /`
+          ).join("\n\n"),
+        },
+        {
+          step: 3,
+          title: "Verify the change",
+          description: `Visit your-domain.com/robots.txt and confirm the AI crawler blocks are removed. Changes take effect immediately — AI crawlers will re-index your site within days.`,
+        },
+      ],
     });
   }
   
@@ -136,6 +268,24 @@ export function generateRecommendations(
       effort: "complex",
       locked: true,
       category: "content",
+      playbook: [
+        {
+          step: 1,
+          title: "Create a comparison page",
+          description: `Write a detailed "${brandName} vs [Top Competitor]" page that honestly compares features, pricing, and use cases. AI loves structured comparison content.`,
+        },
+        {
+          step: 2,
+          title: "Build a buyer's guide",
+          description: `Create a "How to choose the right ${category}" guide with ${brandName} positioned naturally within it. Use H2/H3 headers that match common AI queries.`,
+        },
+        {
+          step: 3,
+          title: "Add FAQ content",
+          description: `Add an FAQ section answering questions like "Is ${brandName} worth it?" and "What's the best ${category} for [use case]?". Direct answers in the first sentence help AI extract and cite your content.`,
+        },
+      ],
+      linkedQueries: failingQueries.slice(0, 5),
     });
   } else if (geoAudit.content.contentDepth === "adequate" || geoAudit.content.contentDepth === "rich") {
     recommendations.push({
@@ -148,6 +298,20 @@ export function generateRecommendations(
       effort: "moderate",
       locked: true,
       category: "content",
+      playbook: [
+        {
+          step: 1,
+          title: "Add direct-answer headers",
+          description: `On your key pages, add H2 headers that match common AI queries. Start each section with a direct 1-2 sentence answer before expanding.`,
+          code: `<!-- Example restructured section -->\n<h2>Is ${brandName} worth it?</h2>\n<p><strong>Yes, ${brandName} is worth it for [specific customer type].</strong> Here's why: [2-3 specific reasons]. However, if you need [X], consider [alternative] instead.</p>`,
+        },
+        {
+          step: 2,
+          title: "Add comparison tables",
+          description: `Create structured comparison tables on product pages. AI engines extract tabular data more reliably than prose.`,
+        },
+      ],
+      linkedQueries: failingQueries.slice(0, 3),
     });
   }
   
@@ -163,6 +327,23 @@ export function generateRecommendations(
       effort: "complex",
       locked: true,
       category: "competitive",
+      playbook: [
+        {
+          step: 1,
+          title: `Check ${topCompetitor.name}'s AI readiness`,
+          description: `Visit ${topCompetitor.name.toLowerCase().replace(/\s+/g, "")}.com/llms.txt to see if they have one. Check their robots.txt for AI crawler access. View page source for schema markup.`,
+        },
+        {
+          step: 2,
+          title: "Audit their content structure",
+          description: `Look at their product pages, blog, and FAQ sections. Note how they structure content — direct answers, comparison tables, structured data. These are the patterns AI engines prefer.`,
+        },
+        {
+          step: 3,
+          title: "Close the gap",
+          description: `Apply the same structural patterns to your site. You don't need to copy their content — just match (and exceed) their AI readiness: llms.txt quality, schema depth, and content structure.`,
+        },
+      ],
     });
   }
   
@@ -180,6 +361,24 @@ export function generateRecommendations(
       effort: "moderate",
       locked: false,
       category: "competitive",
+      playbook: [
+        {
+          step: 1,
+          title: "Identify your winning queries",
+          description: `Look at the queries above where you DID get mentioned. These reveal what AI already knows you're good at. Double down on content around these topics.`,
+        },
+        {
+          step: 2,
+          title: "Create niche content",
+          description: `Build pages targeting long-tail queries where you have a genuine advantage: "${brandName} for [specific audience]", "best ${category} for [specific use case]".`,
+        },
+        {
+          step: 3,
+          title: "Update llms.txt for niche positioning",
+          description: `In your llms.txt, be specific about who you serve best. Generic positioning gets drowned out; specific positioning wins niche queries.`,
+        },
+      ],
+      linkedQueries: failingQueries,
     });
   }
   
@@ -197,4 +396,4 @@ export function generateRecommendations(
   return recommendations;
 }
 
-export type { Recommendation };
+export type { Recommendation, PlaybookStep };

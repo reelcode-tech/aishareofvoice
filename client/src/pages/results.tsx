@@ -16,6 +16,9 @@ import {
   CheckCircle2,
   ArrowRight,
   Info,
+  Copy,
+  Check,
+  BookOpen,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import {
@@ -119,6 +122,13 @@ interface GeoAudit {
   meta: { hasOgTags: boolean; hasDescription: boolean; titleQuality: string };
 }
 
+interface PlaybookStep {
+  step: number;
+  title: string;
+  description: string;
+  code?: string;
+}
+
 interface Recommendation {
   id: string;
   title: string;
@@ -129,6 +139,8 @@ interface Recommendation {
   effort: string;
   locked: boolean;
   category: string;
+  playbook?: PlaybookStep[];
+  linkedQueries?: string[];
 }
 
 interface AuditData {
@@ -906,6 +918,181 @@ function IntentBreakdownSection({
   );
 }
 
+// ─── Recommendation Playbook Card ─────────────────────────────────────────────
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors px-2 py-1 rounded-md border border-primary/20 hover:bg-primary/5"
+      data-testid="copy-code-button"
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+function RecommendationCard({
+  rec,
+  index,
+  brandUrl,
+  navigate,
+}: {
+  rec: Recommendation;
+  index: number;
+  brandUrl: string;
+  navigate: (path: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasPlaybook = rec.playbook && rec.playbook.length > 0;
+
+  return (
+    <div
+      className={`bg-card border rounded-xl overflow-hidden transition-all ${
+        rec.locked
+          ? "opacity-60 relative border-border/50"
+          : expanded
+          ? "border-primary/30 ring-1 ring-primary/10"
+          : "border-border/50 hover:border-border"
+      }`}
+      data-testid={`rec-${rec.id}`}
+    >
+      {rec.locked && (
+        <div className="absolute inset-0 bg-background/40 backdrop-blur-[2px] rounded-xl flex items-center justify-center z-10">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              navigate(`/audit/${encodeURIComponent(brandUrl)}`)
+            }
+            data-testid="unlock-button"
+          >
+            <Lock className="w-3 h-3 mr-1.5" /> Unlock with Pro
+          </Button>
+        </div>
+      )}
+
+      {/* Clickable header */}
+      <button
+        onClick={() => !rec.locked && hasPlaybook && setExpanded(!expanded)}
+        className={`w-full text-left p-5 ${hasPlaybook && !rec.locked ? "cursor-pointer" : "cursor-default"}`}
+        data-testid={`rec-toggle-${rec.id}`}
+      >
+        <div className="flex items-start gap-3">
+          {index === 0 && !rec.locked && (
+            <div className="flex-shrink-0 w-6 h-6 rounded-full bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-xs font-bold text-orange-400">
+              1
+            </div>
+          )}
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              <h3 className="text-sm font-semibold text-foreground">
+                {rec.title}
+              </h3>
+              <Badge
+                variant={rec.impact === "high" ? "default" : "secondary"}
+                className="text-xs"
+              >
+                {rec.impact} impact
+              </Badge>
+              <Badge variant="outline" className="text-xs">
+                {rec.effort}
+              </Badge>
+              {hasPlaybook && !rec.locked && (
+                <span className="ml-auto flex items-center gap-1 text-xs text-primary">
+                  <BookOpen className="w-3.5 h-3.5" />
+                  {expanded ? "Hide" : "Show"} playbook
+                  {expanded ? (
+                    <ChevronDown className="w-3 h-3" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3" />
+                  )}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-foreground/60 leading-relaxed">
+              {rec.why}
+            </p>
+            {rec.expectedImpact && (
+              <p className="text-xs text-primary/80 mt-2 flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5" />
+                {rec.expectedImpact}
+              </p>
+            )}
+            {/* Linked failing queries */}
+            {rec.linkedQueries && rec.linkedQueries.length > 0 && !expanded && (
+              <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs text-foreground/35">Failing on:</span>
+                {rec.linkedQueries.slice(0, 3).map((q, i) => (
+                  <Badge key={i} variant="outline" className="text-[10px] text-foreground/40 border-border/40 font-normal">
+                    {q.length > 40 ? q.slice(0, 37) + "..." : q}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </button>
+
+      {/* Expanded playbook content */}
+      {expanded && hasPlaybook && (
+        <div className="border-t border-border/30 bg-background/30 px-5 py-4">
+          <div className="space-y-4">
+            {rec.playbook!.map((step) => (
+              <div key={step.step} className="flex gap-3">
+                <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-xs font-bold text-primary">
+                  {step.step}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h4 className="text-sm font-medium text-foreground mb-1">
+                    {step.title}
+                  </h4>
+                  <p className="text-sm text-foreground/55 leading-relaxed">
+                    {step.description}
+                  </p>
+                  {step.code && (
+                    <div className="mt-2 relative">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] text-foreground/30 uppercase tracking-wider">Copy-paste this</span>
+                        <CopyButton text={step.code} />
+                      </div>
+                      <pre className="text-xs text-foreground/60 font-mono leading-relaxed whitespace-pre-wrap bg-background rounded-lg p-3 border border-border/30 overflow-x-auto">
+                        {step.code}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Linked queries at bottom of playbook */}
+          {rec.linkedQueries && rec.linkedQueries.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-border/20">
+              <p className="text-xs text-foreground/35 mb-1.5">Queries this will help:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {rec.linkedQueries.map((q, i) => (
+                  <Badge key={i} variant="outline" className="text-[10px] text-foreground/50 border-border/40 font-normal">
+                    "{q}"
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Results() {
@@ -1338,76 +1525,17 @@ export default function Results() {
             What to fix first
           </h2>
           <p className="text-sm text-foreground/50 mb-4">
-            Ordered by expected impact on AI visibility.
+            Ordered by expected impact on AI visibility. Click any recommendation for step-by-step instructions.
           </p>
           <div className="space-y-3">
             {recommendations.map((rec, index) => (
-              <div
+              <RecommendationCard
                 key={rec.id}
-                className={`bg-card border border-border/50 rounded-xl p-5 ${
-                  rec.locked ? "opacity-60 relative" : ""
-                }`}
-                data-testid={`rec-${rec.id}`}
-              >
-                {rec.locked && (
-                  <div className="absolute inset-0 bg-background/40 backdrop-blur-[2px] rounded-xl flex items-center justify-center z-10">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        navigate(`/audit/${encodeURIComponent(data.brandUrl)}`)
-                      }
-                      data-testid="unlock-button"
-                    >
-                      <Lock className="w-3 h-3 mr-1.5" /> Unlock with Pro
-                    </Button>
-                  </div>
-                )}
-                <div className="flex items-start gap-3">
-                  {index === 0 && !rec.locked && (
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-xs font-bold text-orange-400">
-                      1
-                    </div>
-                  )}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                      <h3 className="text-sm font-semibold text-foreground">
-                        {rec.title}
-                      </h3>
-                      <Badge
-                        variant={
-                          rec.impact === "high" ? "default" : "secondary"
-                        }
-                        className="text-xs"
-                      >
-                        {rec.impact} impact
-                      </Badge>
-                      <Badge variant="outline" className="text-xs">
-                        {rec.effort}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-foreground/60 leading-relaxed">
-                      {rec.why}
-                    </p>
-                    {rec.expectedImpact && (
-                      <p className="text-xs text-primary/80 mt-2 flex items-center gap-1.5">
-                        <TrendingUp className="w-3.5 h-3.5" />
-                        {rec.expectedImpact}
-                      </p>
-                    )}
-                    {rec.example && (
-                      <div className="mt-3 bg-background/50 rounded-lg p-3 border border-border/30">
-                        <p className="text-xs text-foreground/40 mb-1.5">
-                          Example:
-                        </p>
-                        <pre className="text-xs text-foreground/60 font-mono leading-relaxed whitespace-pre-wrap">
-                          {rec.example}
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+                rec={rec}
+                index={index}
+                brandUrl={data.brandUrl}
+                navigate={navigate}
+              />
             ))}
           </div>
         </section>
