@@ -1245,8 +1245,15 @@ export default function Results() {
           >
             <ArrowLeft className="w-4 h-4" /> New audit
           </button>
-          <span className="text-sm text-foreground/60">
+          <span className="text-sm text-foreground/60 flex items-center gap-2">
             {data.brandName}&nbsp;&middot;&nbsp;{data.category}
+            <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${
+              data.tier === "agency" ? "bg-amber-500/15 text-amber-500 border border-amber-500/20" :
+              data.tier === "monitor" ? "bg-primary/15 text-primary border border-primary/20" :
+              "bg-foreground/10 text-foreground/50 border border-border/30"
+            }`}>
+              {data.tier === "agency" ? "Agency" : data.tier === "monitor" ? "Monitor" : "Snapshot"}
+            </span>
           </span>
         </div>
       </header>

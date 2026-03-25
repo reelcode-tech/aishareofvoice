@@ -386,15 +386,22 @@ export function generateRecommendations(
   const impactOrder = { high: 0, medium: 1, low: 2 };
   recommendations.sort((a, b) => impactOrder[a.impact] - impactOrder[b.impact]);
   
-  // Snapshot tier: only llms.txt recommendation visible, everything else locked with teaser copy
+  // Tier-based locking:
+  // Snapshot: only llms.txt playbook unlocked, everything else locked
+  // Monitor & Agency: everything unlocked
   const normalizedTier = tier === "free" ? "snapshot" : tier === "pro" ? "monitor" : tier === "enterprise" ? "agency" : tier;
   if (normalizedTier === "snapshot") {
     recommendations.forEach((r) => {
-      // Only the llms.txt recommendation is unlocked
-      const isLlmsTxt = r.id === "llms-txt" || r.title.toLowerCase().includes("llms.txt");
+      // Only the llms.txt recommendation is unlocked for snapshot
+      const isLlmsTxt = r.id === "create-llms-txt" || r.id === "improve-llms-txt" || r.title.toLowerCase().includes("llms.txt");
       if (!isLlmsTxt) {
         r.locked = true;
       }
+    });
+  } else {
+    // Monitor & Agency: unlock everything
+    recommendations.forEach((r) => {
+      r.locked = false;
     });
   }
   

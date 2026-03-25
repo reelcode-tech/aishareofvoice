@@ -131,7 +131,7 @@ export async function registerRoutes(
     }
   });
   
-  // Run a full audit — now with email gate + IP limiting
+  // Run a full audit — email gate for snapshot only, paid tiers bypass
   app.post("/api/audit", async (req, res) => {
     try {
       const parsed = auditRequestSchema.safeParse(req.body);
@@ -142,7 +142,7 @@ export async function registerRoutes(
       const data = parsed.data;
       const ip = getIp(req);
       
-      // ── Email gate for snapshot tier ──
+      // ── Email gate for snapshot tier ONLY ──
       if (data.tier === "snapshot") {
         if (!data.email) {
           return res.status(403).json({ error: "email_required", message: "Email is required to run a free audit." });
@@ -157,14 +157,17 @@ export async function registerRoutes(
           });
         }
       }
+      // Monitor and Agency tiers: no email gate, no audit limits
       
-      // ── IP rate limiting (all tiers, extra protection) ──
-      const ipCheck = await storage.checkIpLimit(ip, MAX_AUDITS_PER_IP_HOUR, 60);
-      if (!ipCheck.allowed) {
-        return res.status(429).json({
-          error: "rate_limited",
-          message: "Too many audits from this location. Try again in an hour.",
-        });
+      // ── IP rate limiting (snapshot only) ──
+      if (data.tier === "snapshot") {
+        const ipCheck = await storage.checkIpLimit(ip, MAX_AUDITS_PER_IP_HOUR, 60);
+        if (!ipCheck.allowed) {
+          return res.status(429).json({
+            error: "rate_limited",
+            message: "Too many audits from this location. Try again in an hour.",
+          });
+        }
       }
       
       // Auto-detect category if missing
@@ -210,11 +213,11 @@ export async function registerRoutes(
         createdAt: result.timestamp,
       });
       
-      // Track lead usage + IP
-      if (data.email) {
+      // Track lead usage + IP (snapshot only)
+      if (data.tier === "snapshot" && data.email) {
         await storage.incrementLeadAuditCount(data.email);
+        await storage.incrementIpCount(ip);
       }
-      await storage.incrementIpCount(ip);
       
       res.json({ id: saved.id, ...result });
     } catch (error: any) {

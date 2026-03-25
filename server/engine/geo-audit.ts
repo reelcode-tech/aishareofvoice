@@ -1,5 +1,6 @@
 // GEO Technical Audit — checks site for AI discoverability signals
 // Checks: llms.txt, schema markup, robots.txt, content depth, meta tags
+// Speed-optimized: all HTTP fetches run in parallel
 
 interface GeoAuditResult {
   llmsTxt: {
@@ -37,7 +38,7 @@ interface GeoAuditResult {
   tier: "ai_visibility_drivers" | "basic_hygiene";
 }
 
-async function fetchWithTimeout(url: string, timeout = 8000): Promise<string | null> {
+async function fetchWithTimeout(url: string, timeout = 6000): Promise<string | null> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -64,8 +65,14 @@ export async function runGeoAudit(siteUrl: string): Promise<GeoAuditResult> {
   const baseUrl = siteUrl.startsWith("http") ? siteUrl : `https://${siteUrl}`;
   const origin = new URL(baseUrl).origin;
   
-  // Check llms.txt
-  const llmsTxtContent = await fetchWithTimeout(`${origin}/llms.txt`);
+  // Fetch all 3 resources IN PARALLEL (big speed win)
+  const [llmsTxtContent, robotsContent, homepageContent] = await Promise.all([
+    fetchWithTimeout(`${origin}/llms.txt`),
+    fetchWithTimeout(`${origin}/robots.txt`),
+    fetchWithTimeout(baseUrl),
+  ]);
+  
+  // Process llms.txt
   const llmsTxt = {
     exists: !!llmsTxtContent,
     url: llmsTxtContent ? `${origin}/llms.txt` : null,
@@ -76,8 +83,7 @@ export async function runGeoAudit(siteUrl: string): Promise<GeoAuditResult> {
     ) as "excellent" | "good" | "minimal" | "none",
   };
   
-  // Check robots.txt
-  const robotsContent = await fetchWithTimeout(`${origin}/robots.txt`);
+  // Process robots.txt
   const aiCrawlers = ["GPTBot", "ChatGPT-User", "Google-Extended", "anthropic-ai", "ClaudeBot", "CCBot", "PerplexityBot"];
   const blockedCrawlers: string[] = [];
   if (robotsContent) {
@@ -94,9 +100,7 @@ export async function runGeoAudit(siteUrl: string): Promise<GeoAuditResult> {
     blockedCrawlers,
   };
   
-  // Check homepage for schema markup, meta tags, content
-  const homepageContent = await fetchWithTimeout(baseUrl);
-  
+  // Process homepage
   let schema = {
     exists: false,
     types: [] as string[],

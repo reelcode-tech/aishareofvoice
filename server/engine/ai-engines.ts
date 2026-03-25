@@ -1,11 +1,11 @@
 // Multi-engine AI query layer
-// Free tier: Gemini + ChatGPT (2 engines)
-// Pro tier: + Claude (3 engines)  
-// Business: + Grok (4 engines)
-// Enterprise: + Perplexity (5 engines)
+// Snapshot: ChatGPT + Gemini (2 engines, cheapest)
+// Monitor: + Claude (3 engines)
+// Agency: + Grok + Perplexity (5 engines)
 
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import { responseCache } from "./cache";
 
 interface EngineResult {
   engine: string;
@@ -21,7 +21,7 @@ interface EngineResult {
 
 interface EngineConfig {
   name: string;
-  tier: "free" | "pro" | "business" | "enterprise";
+  tier: "snapshot" | "monitor" | "agency";
   queryFn: (query: string, systemPrompt?: string) => Promise<{ response: string }>;
   model: string;
 }
@@ -174,7 +174,7 @@ function extractBrands(response: string, targetBrand: string): {
   const mentionedBrands = new Set<string>();
   
   // Pattern 1 (highest priority): **Bold brand names** — the system prompt tells AI to do this
-  const boldPattern = /\*\*([A-Z][A-Za-z\s&'.()\-/]+?)\*\*/g;
+  const boldPattern = /\*\*([A-Z][A-Za-z\s&'.()\-\/]+?)\*\*/g;
   let match;
   while ((match = boldPattern.exec(response)) !== null) {
     const brand = match[1].trim().replace(/\*+/g, "");
@@ -191,7 +191,7 @@ function extractBrands(response: string, targetBrand: string): {
   // Pattern 2 (fallback): Numbered list items that look like brand names
   // Only use if bold extraction found very few results
   if (mentionedBrands.size < 3) {
-    const listPattern = /\d+\.\s*\*?\*?([A-Z][A-Za-z\s&'.()-]+?)(?:\*?\*?\s*[-–—:]|\s*\n)/g;
+    const listPattern = /\d+\.\s*\*?\*?([A-Z][A-Za-z\s&'.()\-]+?)(?:\*?\*?\s*[\-–—:]|\s*\n)/g;
     while ((match = listPattern.exec(response)) !== null) {
       const brand = match[1].trim().replace(/\*+/g, "");
       const brandLower = brand.toLowerCase();
@@ -261,7 +261,13 @@ Example BAD response (don't do this):
 **Strengths**: Good features. **Tip**: Start with free tier. **AI Features**: Built-in automation.`;
 }
 
+// ── Engine query functions ──────────────────────────────────────────
+
 async function queryGemini(query: string, systemPrompt?: string): Promise<{ response: string }> {
+  // Check cache first
+  const cached = responseCache.get("gemini", query);
+  if (cached) return { response: cached };
+  
   const client = new OpenAI();
   try {
     const response = await client.responses.create({
@@ -272,6 +278,8 @@ async function queryGemini(query: string, systemPrompt?: string): Promise<{ resp
     const text = typeof response.output === 'string' 
       ? response.output 
       : response.output_text || JSON.stringify(response.output);
+    
+    responseCache.set("gemini", query, text);
     return { response: text };
   } catch (error: any) {
     console.error("Gemini query error:", error.message);
@@ -280,6 +288,10 @@ async function queryGemini(query: string, systemPrompt?: string): Promise<{ resp
 }
 
 async function queryChatGPT(query: string, systemPrompt?: string): Promise<{ response: string }> {
+  // Check cache first
+  const cached = responseCache.get("chatgpt", query);
+  if (cached) return { response: cached };
+  
   const client = new OpenAI();
   try {
     const response = await client.responses.create({
@@ -290,6 +302,8 @@ async function queryChatGPT(query: string, systemPrompt?: string): Promise<{ res
     const text = typeof response.output === 'string' 
       ? response.output 
       : response.output_text || JSON.stringify(response.output);
+    
+    responseCache.set("chatgpt", query, text);
     return { response: text };
   } catch (error: any) {
     console.error("ChatGPT query error:", error.message);
@@ -298,6 +312,10 @@ async function queryChatGPT(query: string, systemPrompt?: string): Promise<{ res
 }
 
 async function queryClaude(query: string, systemPrompt?: string): Promise<{ response: string }> {
+  // Check cache first
+  const cached = responseCache.get("claude", query);
+  if (cached) return { response: cached };
+  
   const client = new Anthropic();
   try {
     const message = await client.messages.create({
@@ -307,9 +325,61 @@ async function queryClaude(query: string, systemPrompt?: string): Promise<{ resp
       messages: [{ role: "user", content: query }],
     });
     const text = message.content.map((c: any) => c.type === "text" ? c.text : "").join("");
+    
+    responseCache.set("claude", query, text);
     return { response: text };
   } catch (error: any) {
     console.error("Claude query error:", error.message);
+    return { response: "" };
+  }
+}
+
+// Grok (Agency tier) — uses OpenAI-compatible API via cheapest model
+async function queryGrok(query: string, systemPrompt?: string): Promise<{ response: string }> {
+  // Check cache first
+  const cached = responseCache.get("grok", query);
+  if (cached) return { response: cached };
+  
+  const client = new OpenAI();
+  try {
+    const response = await client.responses.create({
+      model: "grok_3_mini",
+      instructions: systemPrompt || "Always respond in English.",
+      input: query,
+    });
+    const text = typeof response.output === 'string' 
+      ? response.output 
+      : response.output_text || JSON.stringify(response.output);
+    
+    responseCache.set("grok", query, text);
+    return { response: text };
+  } catch (error: any) {
+    console.error("Grok query error:", error.message);
+    return { response: "" };
+  }
+}
+
+// Perplexity (Agency tier) — uses OpenAI-compatible API
+async function queryPerplexity(query: string, systemPrompt?: string): Promise<{ response: string }> {
+  // Check cache first
+  const cached = responseCache.get("perplexity", query);
+  if (cached) return { response: cached };
+  
+  const client = new OpenAI();
+  try {
+    const response = await client.responses.create({
+      model: "sonar",
+      instructions: systemPrompt || "Always respond in English.",
+      input: query,
+    });
+    const text = typeof response.output === 'string' 
+      ? response.output 
+      : response.output_text || JSON.stringify(response.output);
+    
+    responseCache.set("perplexity", query, text);
+    return { response: text };
+  } catch (error: any) {
+    console.error("Perplexity query error:", error.message);
     return { response: "" };
   }
 }
@@ -319,11 +389,13 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
     { name: "ChatGPT", tier: "snapshot", queryFn: queryChatGPT, model: "gpt5_nano" },
     { name: "Gemini", tier: "snapshot", queryFn: queryGemini, model: "gemini_3_flash" },
     { name: "Claude", tier: "monitor", queryFn: queryClaude, model: "claude_haiku_4_5" },
+    { name: "Grok", tier: "agency", queryFn: queryGrok, model: "grok_3_mini" },
+    { name: "Perplexity", tier: "agency", queryFn: queryPerplexity, model: "sonar" },
   ];
   
   // Snapshot: 2 engines (ChatGPT + Gemini)
   // Monitor: 3 engines (+ Claude)
-  // Agency: 3 engines (same as Monitor, but more queries per brand)
+  // Agency: 5 engines (+ Grok + Perplexity)
   const tierOrder = ["snapshot", "monitor", "agency"];
   // Also support legacy tier names during transition
   const legacyMap: Record<string, string> = { "free": "snapshot", "pro": "monitor", "enterprise": "agency" };
@@ -331,6 +403,70 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
   const tierIndex = tierOrder.indexOf(normalizedTier);
   
   return engines.filter(e => tierOrder.indexOf(e.tier) <= tierIndex);
+}
+
+// ── Concurrency-controlled batch query execution ──────────────────
+
+const MAX_CONCURRENT = 8; // Max parallel API calls
+
+async function runWithConcurrency<T>(
+  tasks: (() => Promise<T>)[],
+  maxConcurrent: number = MAX_CONCURRENT
+): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let nextIndex = 0;
+
+  async function runNext(): Promise<void> {
+    while (nextIndex < tasks.length) {
+      const index = nextIndex++;
+      results[index] = await tasks[index]();
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(maxConcurrent, tasks.length) },
+    () => runNext()
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+export async function queryEnginesBatch(
+  engines: EngineConfig[],
+  queries: { query: string; intent: string }[],
+  targetBrand: string,
+  category: string = "general"
+): Promise<EngineResult[]> {
+  const systemPrompt = getBrandExtractionSystemPrompt(category);
+  
+  // Create all tasks
+  const tasks = engines.flatMap(engine =>
+    queries.map(q => async (): Promise<EngineResult> => {
+      const result = await engine.queryFn(q.query, systemPrompt);
+      const { mentionsBrand, mentionedBrands } = extractBrands(result.response, targetBrand);
+      const sentiment = analyzeSentiment(result.response, targetBrand);
+      const citations = extractCitations(result.response);
+      
+      return {
+        engine: engine.name,
+        model: engine.model,
+        query: q.query,
+        response: result.response,
+        mentionsBrand,
+        mentionedBrands,
+        sentiment,
+        citations,
+        timestamp: new Date().toISOString(),
+      };
+    })
+  );
+  
+  console.log(`[Engines] Running ${tasks.length} queries with max ${MAX_CONCURRENT} concurrent...`);
+  const startTime = Date.now();
+  const results = await runWithConcurrency(tasks);
+  console.log(`[Engines] Completed ${tasks.length} queries in ${((Date.now() - startTime) / 1000).toFixed(1)}s (cache: ${responseCache.size} entries)`);
+  
+  return results;
 }
 
 export async function queryEngine(

@@ -31,7 +31,7 @@ const TIERS = [
     id: "snapshot",
     label: "Snapshot",
     description: "Free one-time audit",
-    features: ["2 AI engines", "12 queries", "Top 3 competitors", "1 playbook (llms.txt)"],
+    features: ["2 AI engines (ChatGPT + Gemini)", "12 queries", "Top 3 competitors", "1 playbook (llms.txt)"],
     lockedFeatures: ["Trend tracking", "All playbooks", "Weekly re-runs"],
     price: "Free",
     priceDetail: "Email required",
@@ -41,7 +41,7 @@ const TIERS = [
     id: "monitor",
     label: "Monitor",
     description: "Track your brand continuously",
-    features: ["3 AI engines", "25 queries per run", "Weekly automated re-runs", "Trend chart", "Competitor change alerts", "Full query-level responses", "Loss attribution", "All playbooks", "Shareable link"],
+    features: ["3 AI engines (+Claude)", "25 queries per run", "All competitors visible", "All playbooks unlocked", "Full query-level responses", "Loss attribution"],
     lockedFeatures: [],
     price: "$79",
     priceDetail: "/month \u00b7 1 brand",
@@ -52,7 +52,7 @@ const TIERS = [
     id: "agency",
     label: "Agency",
     description: "Multi-brand monitoring",
-    features: ["5 AI engines", "30 queries per brand", "Daily monitoring option", "Slack + email digest", "White-label PDF export", "3 team seats", "Client-ready links", "Priority support"],
+    features: ["5 AI engines (+Grok +Perplexity)", "30 queries per brand", "All competitors + deep analysis", "All playbooks unlocked", "Full query-level responses", "Multi-brand support (up to 10)"],
     lockedFeatures: [],
     price: "$349",
     priceDetail: "/month \u00b7 up to 10 brands",
@@ -390,23 +390,20 @@ export default function AuditForm() {
               {TIERS.map(t => {
                 const Icon = t.icon;
                 const isSelected = tier === t.id;
-                const isPaid = t.id !== "snapshot";
                 return (
                   <button
                     key={t.id}
-                    onClick={() => !isPaid && setTier(t.id)}
+                    onClick={() => setTier(t.id)}
                     className={`relative p-4 rounded-xl border text-left transition-all ${
                       isSelected
                         ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-                        : isPaid
-                        ? "border-border/30 bg-card/50 opacity-70"
                         : "border-border/50 bg-card hover:border-border"
                     }`}
                     data-testid={`tier-${t.id}`}
                   >
                     {t.popular && (
                       <div className="absolute -top-2.5 left-1/2 -translate-x-1/2">
-                        <Badge className="text-[10px] bg-primary/90 text-primary-foreground px-2 py-0">Coming soon</Badge>
+                        <Badge className="text-[10px] bg-primary/90 text-primary-foreground px-2 py-0">Most popular</Badge>
                       </div>
                     )}
                     <div className="flex items-center gap-2 mb-1.5">
