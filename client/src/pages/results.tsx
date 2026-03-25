@@ -966,16 +966,22 @@ function RecommendationCard({
       data-testid={`rec-${rec.id}`}
     >
       {rec.locked && (
-        <div className="absolute inset-0 bg-background/40 backdrop-blur-[2px] rounded-xl flex items-center justify-center z-10">
+        <div className="absolute inset-x-0 bottom-0 top-[70%] bg-gradient-to-t from-background via-background/95 to-transparent rounded-b-xl flex flex-col items-center justify-end pb-4 z-10">
+          <p className="text-xs text-foreground/50 mb-2 text-center max-w-[280px]">
+            {rec.linkedQueries && rec.linkedQueries.length > 0
+              ? `You're invisible on ${rec.linkedQueries.length} high-intent quer${rec.linkedQueries.length === 1 ? "y" : "ies"}. See exactly what to fix.`
+              : "We found the gap. Upgrade to see the fix."
+            }
+          </p>
           <Button
             size="sm"
-            variant="outline"
+            className="bg-primary hover:bg-primary/90"
             onClick={() =>
               navigate(`/audit/${encodeURIComponent(brandUrl)}`)
             }
             data-testid="unlock-button"
           >
-            <Lock className="w-3 h-3 mr-1.5" /> Unlock with Pro
+            <Lock className="w-3 h-3 mr-1.5" /> Unlock with Monitor · $79/mo
           </Button>
         </div>
       )}
@@ -1140,7 +1146,11 @@ export default function Results() {
   const scores = data.scores || ({} as Scores);
   const overall = scores.overall || ({} as Scores["overall"]);
   const dimensions = scores.dimensions || ({} as Scores["dimensions"]);
-  const competitors = scores.competitors || [];
+  const allCompetitors = scores.competitors || [];
+  // Snapshot tier: cap at top 3 competitors
+  const isSnapshot = data.tier === "snapshot" || data.tier === "free";
+  const competitors = isSnapshot ? allCompetitors.slice(0, 3) : allCompetitors;
+  const hiddenCompetitorCount = isSnapshot ? Math.max(0, allCompetitors.length - 3) : 0;
   const sentiment = scores.sentimentBreakdown || ({} as SentimentBreakdown);
   const perEngine = scores.perEngine || {};
   const queryDetails = scores.queryDetails || [];
@@ -1396,6 +1406,21 @@ export default function Results() {
             <p className="text-sm text-foreground/45">
               No competitor data extracted from AI responses.
             </p>
+          )}
+          {hiddenCompetitorCount > 0 && (
+            <div className="mt-3 p-4 bg-card/50 border border-border/30 rounded-xl text-center">
+              <p className="text-sm text-foreground/50 mb-2">
+                +{hiddenCompetitorCount} more competitor{hiddenCompetitorCount !== 1 ? "s" : ""} detected. See who else AI recommends in your space.
+              </p>
+              <Button
+                size="sm"
+                className="bg-primary hover:bg-primary/90"
+                onClick={() => navigate(`/audit/${encodeURIComponent(data.brandUrl)}`)}
+              >
+                <Lock className="w-3 h-3 mr-1.5" />
+                Unlock full competitor map · Monitor $79/mo
+              </Button>
+            </div>
           )}
         </section>
 

@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { runAudit } from "./engine/audit-runner";
@@ -6,13 +6,24 @@ import { detectBrandFromUrl, detectCategoryWithAI } from "./engine/brand-detecti
 import { discoverCompetitors } from "./engine/competitor-discovery";
 import { auditRequestSchema } from "@shared/schema";
 
+// Extract IP from request (handles proxies)
+function getIp(req: Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
+  return req.ip || req.socket.remoteAddress || "unknown";
+}
+
+// Max free (snapshot) audits per email
+const MAX_SNAPSHOT_AUDITS_PER_EMAIL = 3;
+// Max audits per IP per hour (without email)
+const MAX_AUDITS_PER_IP_HOUR = 5;
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
   
   // Detect brand from URL (for the confirmation step)
-  // Also uses AI to infer the category if not in the known-domains list
   app.post("/api/detect", async (req, res) => {
     try {
       const { url } = req.body;
@@ -23,12 +34,10 @@ export async function registerRoutes(
         return res.json({ brand: "Unknown", category: "general", categoryConfidence: "low", categoryReason: "Could not identify brand from URL", categorySource: "ai_inferred" });
       }
       
-      // If we know the domain, return immediately with high confidence
       if (detected.category) {
         return res.json({ ...detected, categoryConfidence: "high", categoryReason: `${detected.brand} is a well-known brand in this space`, categorySource: "known_domain" });
       }
       
-      // For unknown domains, use AI to infer the category
       console.log(`[Detect] Unknown domain, using AI to infer category for ${detected.brand}`);
       const aiResult = await detectCategoryWithAI(url, detected.brand);
       console.log(`[Detect] AI inferred category: "${aiResult.category}" (${aiResult.confidence})`);
@@ -40,8 +49,7 @@ export async function registerRoutes(
     }
   });
   
-  // Combined detect + competitor discovery — single call, parallel execution
-  // Returns brand, category (with confidence), AND competitors in one shot
+  // Combined detect + competitor discovery
   app.post("/api/detect-all", async (req, res) => {
     try {
       const { url } = req.body;
@@ -50,7 +58,6 @@ export async function registerRoutes(
       const detected = detectBrandFromUrl(url);
       const brand = detected?.brand || "Unknown";
       
-      // For known domains: we already have brand + category, just need competitors
       if (detected?.category) {
         console.log(`[DetectAll] Known domain ${brand} in ${detected.category}, fetching competitors...`);
         const competitors = await discoverCompetitors(brand, detected.category, url);
@@ -64,13 +71,10 @@ export async function registerRoutes(
         });
       }
       
-      // For unknown domains: run category detection first, then competitors with the correct category
-      // This avoids the wasteful pattern of running broad competitors and then re-running
       console.log(`[DetectAll] Unknown domain — detecting category for ${brand}...`);
       const aiResult = await detectCategoryWithAI(url, brand);
       console.log(`[DetectAll] Category detected: "${aiResult.category}" (${aiResult.confidence}). Now discovering competitors...`);
       
-      // Now discover competitors with the correct category
       const competitors = await discoverCompetitors(brand, aiResult.category || "general", url);
       console.log(`[DetectAll] Found ${competitors.length} competitors`);
       
@@ -88,8 +92,7 @@ export async function registerRoutes(
     }
   });
 
-  // Discover competitors for a brand+category (lightweight AI call)
-  // This runs BEFORE the full audit so the user can review/edit the competitor set
+  // Discover competitors
   app.post("/api/discover-competitors", async (req, res) => {
     try {
       const { brandName, category, url } = req.body;
@@ -107,8 +110,28 @@ export async function registerRoutes(
       res.status(500).json({ error: error.message });
     }
   });
+
+  // ── Email gate: register lead ────────────────────────────
+  app.post("/api/lead", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email || typeof email !== "string" || !email.includes("@")) {
+        return res.status(400).json({ error: "Valid email required" });
+      }
+      const lead = await storage.getOrCreateLead(email);
+      res.json({
+        email: lead.email,
+        auditCount: lead.auditCount,
+        canAudit: lead.auditCount < MAX_SNAPSHOT_AUDITS_PER_EMAIL,
+        remaining: Math.max(0, MAX_SNAPSHOT_AUDITS_PER_EMAIL - lead.auditCount),
+      });
+    } catch (error: any) {
+      console.error("[Lead Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
   
-  // Run a full audit
+  // Run a full audit — now with email gate + IP limiting
   app.post("/api/audit", async (req, res) => {
     try {
       const parsed = auditRequestSchema.safeParse(req.body);
@@ -117,8 +140,34 @@ export async function registerRoutes(
       }
       
       const data = parsed.data;
+      const ip = getIp(req);
       
-      // If category is missing or generic, auto-detect it with AI
+      // ── Email gate for snapshot tier ──
+      if (data.tier === "snapshot") {
+        if (!data.email) {
+          return res.status(403).json({ error: "email_required", message: "Email is required to run a free audit." });
+        }
+        // Check per-email limit
+        const lead = await storage.getOrCreateLead(data.email);
+        if (lead.auditCount >= MAX_SNAPSHOT_AUDITS_PER_EMAIL) {
+          return res.status(429).json({
+            error: "email_limit_reached",
+            message: `You've used all ${MAX_SNAPSHOT_AUDITS_PER_EMAIL} free audits. Upgrade to Monitor for unlimited audits.`,
+            auditCount: lead.auditCount,
+          });
+        }
+      }
+      
+      // ── IP rate limiting (all tiers, extra protection) ──
+      const ipCheck = await storage.checkIpLimit(ip, MAX_AUDITS_PER_IP_HOUR, 60);
+      if (!ipCheck.allowed) {
+        return res.status(429).json({
+          error: "rate_limited",
+          message: "Too many audits from this location. Try again in an hour.",
+        });
+      }
+      
+      // Auto-detect category if missing
       if (!data.category || data.category === "general" || data.category.trim() === "") {
         const detected = detectBrandFromUrl(data.url);
         if (detected?.category) {
@@ -134,8 +183,7 @@ export async function registerRoutes(
       
       const result = await runAudit(data);
       
-      // Save to database for historical tracking
-      // engineResults stores { perEngine, dimensions } so the GET endpoint can reconstruct the full scores object
+      // Save to database
       const saved = await storage.createAudit({
         brandName: result.brandName,
         brandUrl: result.brandUrl,
@@ -162,6 +210,12 @@ export async function registerRoutes(
         createdAt: result.timestamp,
       });
       
+      // Track lead usage + IP
+      if (data.email) {
+        await storage.incrementLeadAuditCount(data.email);
+      }
+      await storage.incrementIpCount(ip);
+      
       res.json({ id: saved.id, ...result });
     } catch (error: any) {
       console.error("[Audit Error]", error);
@@ -170,7 +224,6 @@ export async function registerRoutes(
   });
   
   // Get a specific audit result
-  // Reconstructs the nested `scores` object that the Results page expects
   app.get("/api/audit/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -186,9 +239,6 @@ export async function registerRoutes(
       const recommendations = JSON.parse(audit.recommendations || "[]");
       const customCompetitors = JSON.parse(audit.customCompetitors || "[]");
       
-      // Reconstruct the scores object that the Results page expects
-      // The POST /api/audit returns { scores: { overall, dimensions, ... } }
-      // but the DB stores flat fields. We rebuild that structure here.
       const scores = {
         overall: {
           score: audit.overallScore ?? 0,
@@ -198,7 +248,6 @@ export async function registerRoutes(
           marginOfError: parseFloat(audit.marginOfError ?? "0"),
           observations: audit.observations ?? 0,
         },
-        // Dimensions and per-engine are stored inside engineResults JSON
         dimensions: engineResults.dimensions || {},
         competitors,
         sentimentBreakdown: sentimentData,
@@ -224,7 +273,7 @@ export async function registerRoutes(
     }
   });
   
-  // Get audit history for a brand (for historical tracking)
+  // Get audit history for a brand
   app.get("/api/history/:brandName", async (req, res) => {
     try {
       const history = await storage.getAuditsByBrand(req.params.brandName);

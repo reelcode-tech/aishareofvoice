@@ -386,10 +386,15 @@ export function generateRecommendations(
   const impactOrder = { high: 0, medium: 1, low: 2 };
   recommendations.sort((a, b) => impactOrder[a.impact] - impactOrder[b.impact]);
   
-  // For free tier: first 4 visible, rest locked
-  if (tier === "free") {
-    recommendations.forEach((r, i) => {
-      if (i >= 4) r.locked = true;
+  // Snapshot tier: only llms.txt recommendation visible, everything else locked with teaser copy
+  const normalizedTier = tier === "free" ? "snapshot" : tier === "pro" ? "monitor" : tier === "enterprise" ? "agency" : tier;
+  if (normalizedTier === "snapshot") {
+    recommendations.forEach((r) => {
+      // Only the llms.txt recommendation is unlocked
+      const isLlmsTxt = r.id === "llms-txt" || r.title.toLowerCase().includes("llms.txt");
+      if (!isLlmsTxt) {
+        r.locked = true;
+      }
     });
   }
   

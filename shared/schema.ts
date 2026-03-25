@@ -2,6 +2,26 @@ import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// Email leads — gating the free tier
+export const leads = sqliteTable("leads", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  email: text("email").notNull().unique(),
+  auditCount: integer("audit_count").notNull().default(0),
+  firstAuditAt: text("first_audit_at"),
+  lastAuditAt: text("last_audit_at"),
+  createdAt: text("created_at").notNull(),
+});
+
+// IP rate limiting — prevent abuse without email
+export const ipLimits = sqliteTable("ip_limits", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ipAddress: text("ip_address").notNull(),
+  auditCount: integer("audit_count").notNull().default(0),
+  windowStart: text("window_start").notNull(),
+});
+
+export type Lead = typeof leads.$inferSelect;
+
 // Audit results stored for historical tracking
 export const audits = sqliteTable("audits", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -40,7 +60,8 @@ export const auditRequestSchema = z.object({
   url: z.string().url().or(z.string().min(3)),
   brandName: z.string().optional(),
   category: z.string().optional(),
-  tier: z.enum(["free", "pro", "enterprise"]).default("free"),
+  tier: z.enum(["snapshot", "monitor", "agency"]).default("snapshot"),
+  email: z.string().email().optional(),
   language: z.string().default("en"),
   customCompetitors: z.array(z.string()).optional(),
 });

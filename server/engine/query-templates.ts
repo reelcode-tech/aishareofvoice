@@ -258,10 +258,13 @@ export function getQueriesForBrand(
   brand: string,
   category: string,
   language: string = "en",
-  tier: "free" | "pro" | "enterprise" = "free"
+  tier: "snapshot" | "monitor" | "agency" | "free" | "pro" | "enterprise" = "snapshot"
 ): { query: string; intent: string }[] {
-  // Updated tier query limits: Free=12, Pro=25, Enterprise=30
-  const queryLimit = tier === "free" ? 12 : tier === "pro" ? 25 : 30;
+  // Tier query limits: Snapshot=12, Monitor=25, Agency=30
+  // Also support legacy tier names
+  const legacyMap: Record<string, string> = { "free": "snapshot", "pro": "monitor", "enterprise": "agency" };
+  const normalizedTier = legacyMap[tier] || tier;
+  const queryLimit = normalizedTier === "snapshot" ? 12 : normalizedTier === "monitor" ? 25 : 30;
   
   // For non-English languages, use the natively-written templates
   if (language !== "en" && MULTILANG_QUERIES[language]) {

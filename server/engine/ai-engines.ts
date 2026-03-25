@@ -316,14 +316,19 @@ async function queryClaude(query: string, systemPrompt?: string): Promise<{ resp
 
 export function getEnginesForTier(tier: string): EngineConfig[] {
   const engines: EngineConfig[] = [
-    { name: "ChatGPT", tier: "free", queryFn: queryChatGPT, model: "gpt5_nano" },
-    { name: "Gemini", tier: "free", queryFn: queryGemini, model: "gemini_3_flash" },
-    { name: "Claude", tier: "pro", queryFn: queryClaude, model: "claude_haiku_4_5" },
+    { name: "ChatGPT", tier: "snapshot", queryFn: queryChatGPT, model: "gpt5_nano" },
+    { name: "Gemini", tier: "snapshot", queryFn: queryGemini, model: "gemini_3_flash" },
+    { name: "Claude", tier: "monitor", queryFn: queryClaude, model: "claude_haiku_4_5" },
   ];
   
-  // Updated tiers: Free (2 engines), Pro (3 engines), Enterprise (3 engines + more queries)
-  const tierOrder = ["free", "pro", "enterprise"];
-  const tierIndex = tierOrder.indexOf(tier);
+  // Snapshot: 2 engines (ChatGPT + Gemini)
+  // Monitor: 3 engines (+ Claude)
+  // Agency: 3 engines (same as Monitor, but more queries per brand)
+  const tierOrder = ["snapshot", "monitor", "agency"];
+  // Also support legacy tier names during transition
+  const legacyMap: Record<string, string> = { "free": "snapshot", "pro": "monitor", "enterprise": "agency" };
+  const normalizedTier = legacyMap[tier] || tier;
+  const tierIndex = tierOrder.indexOf(normalizedTier);
   
   return engines.filter(e => tierOrder.indexOf(e.tier) <= tierIndex);
 }
