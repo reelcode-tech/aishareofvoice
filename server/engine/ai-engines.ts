@@ -407,7 +407,7 @@ async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: st
   
   const start = Date.now();
   try {
-    const text = await callAnthropic(apiKey, "claude-3-5-haiku-20241022", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
+    const text = await callAnthropic(apiKey, "claude-3-haiku-20240307", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
     await setCached("claude", query, text, tier);
     await recordSuccess("claude");
     await recordSpend("claude");
@@ -480,7 +480,7 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
   const engines: EngineConfig[] = [
     { name: "ChatGPT", tier: "snapshot", queryFn: queryChatGPTEngine, model: "gpt-4o-mini" },
     { name: "Gemini", tier: "snapshot", queryFn: queryGeminiEngine, model: "gemini-2.0-flash" },
-    { name: "Claude", tier: "monitor", queryFn: queryClaudeEngine, model: "claude-3-5-haiku" },
+    { name: "Claude", tier: "monitor", queryFn: queryClaudeEngine, model: "claude-3-haiku" },
     { name: "Grok", tier: "agency", queryFn: queryGrokEngine, model: "grok-3-mini-fast" },
     { name: "Perplexity", tier: "agency", queryFn: queryPerplexityEngine, model: "sonar" },
   ];

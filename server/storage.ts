@@ -107,18 +107,19 @@ export class DatabaseStorage implements IStorage {
 
   // ── IP rate limiting ───────────────────────────────────
   async checkIpLimit(ip: string, maxPerWindow: number = 3, windowMinutes: number = 60): Promise<{ allowed: boolean; remaining: number }> {
-    const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000);
+    const windowStartMs = Date.now() - windowMinutes * 60 * 1000;
+    const windowStartISO = new Date(windowStartMs).toISOString();
     
-    // Clean old entries
-    await this.db.delete(ipLimits).where(
-      sql`${ipLimits.windowStart} < ${windowStart}`
+    // Clean old entries using raw SQL timestamp to avoid Date serialization issues
+    await this.db.execute(
+      sql`DELETE FROM ip_limits WHERE window_start < ${windowStartISO}::timestamp`
     );
     
     // Count in current window
     const records = await this.db.select().from(ipLimits)
       .where(and(
         eq(ipLimits.ipAddress, ip),
-        gt(ipLimits.windowStart, windowStart)
+        sql`${ipLimits.windowStart} > ${windowStartISO}::timestamp`
       ));
     
     const totalCount = records.reduce((sum, r) => sum + r.auditCount, 0);
