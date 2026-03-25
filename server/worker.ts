@@ -4,7 +4,6 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { logger } from "hono/logger";
 import { createApiRoutes } from "./routes";
 import { LazyStorage } from "./storage";
 
@@ -25,20 +24,102 @@ interface Env {
 const app = new Hono<{ Bindings: Env }>();
 
 // Middleware
-app.use("*", logger());
 app.use("*", cors({
   origin: "*",
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization"],
+  allowHeaders: ["Content-Type", "Authorization", "x-asov-request-id"],
+  exposeHeaders: ["x-asov-request-id"],
 }));
 
 // Health check — no DB needed
 app.get("/api/health", (c) => c.json({ 
   status: "ok", 
   timestamp: new Date().toISOString(),
-  version: "2.0.0",
+  version: "2.1.0",
   runtime: "cloudflare-workers",
+  features: [
+    "idempotency",
+    "spend-tracking",
+    "circuit-breaker",
+    "abuse-controls",
+    "structured-logging",
+    "auto-migration",
+  ],
 }));
+
+// Auto-migrate: create tables if they don't exist
+// Uses IF NOT EXISTS so it's safe to run on every deploy
+app.get("/api/migrate", async (c) => {
+  try {
+    const env = c.env;
+    // Bridge env first
+    process.env.DATABASE_URL = env.DATABASE_URL;
+    
+    const { getDb } = await import("./storage");
+    const db = getDb();
+    
+    // Run migrations using raw SQL
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS leads (
+        id SERIAL PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        audit_count INTEGER NOT NULL DEFAULT 0,
+        first_audit_at TIMESTAMP,
+        last_audit_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+    
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS ip_limits (
+        id SERIAL PRIMARY KEY,
+        ip_address TEXT NOT NULL,
+        audit_count INTEGER NOT NULL DEFAULT 0,
+        window_start TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+    
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS audits (
+        id SERIAL PRIMARY KEY,
+        brand_name TEXT NOT NULL,
+        brand_url TEXT NOT NULL,
+        category TEXT NOT NULL,
+        tier TEXT NOT NULL DEFAULT 'snapshot',
+        language TEXT NOT NULL DEFAULT 'en',
+        overall_score INTEGER,
+        overall_grade TEXT,
+        confidence_low DOUBLE PRECISION,
+        confidence_high DOUBLE PRECISION,
+        margin_of_error TEXT,
+        observations INTEGER,
+        engine_results JSONB,
+        competitors JSONB,
+        query_results JSONB,
+        sentiment_data JSONB,
+        citation_data JSONB,
+        geo_audit JSONB,
+        recommendations JSONB,
+        custom_competitors JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+    `);
+    
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_audits_brand ON audits(brand_name);`);
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_audits_created ON audits(created_at DESC);`);
+    await db.execute(`CREATE INDEX IF NOT EXISTS idx_audits_brand_created ON audits(brand_name, created_at DESC);`);
+    
+    return c.json({ 
+      status: "ok", 
+      message: "All tables created/verified",
+      tables: ["leads", "ip_limits", "audits"],
+      indexes: ["idx_audits_brand", "idx_audits_created", "idx_audits_brand_created"],
+    });
+  } catch (error: any) {
+    console.error("[Migrate] Error:", error);
+    return c.json({ status: "error", error: error.message }, 500);
+  }
+});
 
 // Bridge Workers env bindings → process.env before any API handler runs
 app.use("/api/*", async (c, next) => {

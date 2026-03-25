@@ -5,6 +5,9 @@
 // Agency: + Grok + Perplexity (5 engines)
 
 import { getCached, setCached } from "./cache";
+import { recordFailure, recordSuccess, shouldSkipProvider } from "./circuit-breaker";
+import { recordSpend } from "./spend-tracker";
+import { logger } from "./logger";
 
 interface EngineResult {
   engine: string;
@@ -341,91 +344,132 @@ async function callGemini(
 
 async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
   const cached = await getCached("gemini", query, tier);
-  if (cached) return { response: cached };
+  if (cached) { logger.cache("hit", { engine: "gemini", tier }); return { response: cached }; }
+  
+  // Circuit breaker check
+  const skip = await shouldSkipProvider("gemini");
+  if (skip.skip) { logger.provider("skipped", { provider: "gemini", reason: skip.reason }); return { response: "" }; }
   
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
-  if (!apiKey) { console.error("[Gemini] No API key"); return { response: "" }; }
+  if (!apiKey) { logger.warn("no_api_key", { provider: "gemini" }); return { response: "" }; }
   
+  const start = Date.now();
   try {
     const text = await callGemini(apiKey, "gemini-2.0-flash", query, systemPrompt, PROVIDER_TIMEOUTS.gemini);
     await setCached("gemini", query, text, tier);
+    await recordSuccess("gemini");
+    await recordSpend("gemini");
+    logger.provider("success", { provider: "gemini", model: "gemini-2.0-flash", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    console.error("Gemini query error:", error.message);
+    await recordFailure("gemini");
+    logger.provider("error", { provider: "gemini", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
   const cached = await getCached("chatgpt", query, tier);
-  if (cached) return { response: cached };
+  if (cached) { logger.cache("hit", { engine: "chatgpt", tier }); return { response: cached }; }
+  
+  const skip = await shouldSkipProvider("chatgpt");
+  if (skip.skip) { logger.provider("skipped", { provider: "chatgpt", reason: skip.reason }); return { response: "" }; }
   
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) { console.error("[ChatGPT] No API key"); return { response: "" }; }
+  if (!apiKey) { logger.warn("no_api_key", { provider: "chatgpt" }); return { response: "" }; }
   
+  const start = Date.now();
   try {
     const text = await callOpenAICompatible(
       "https://api.openai.com/v1", apiKey, "gpt-4o-mini", query, systemPrompt, PROVIDER_TIMEOUTS.openai
     );
     await setCached("chatgpt", query, text, tier);
+    await recordSuccess("chatgpt");
+    await recordSpend("chatgpt");
+    logger.provider("success", { provider: "chatgpt", model: "gpt-4o-mini", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    console.error("ChatGPT query error:", error.message);
+    await recordFailure("chatgpt");
+    logger.provider("error", { provider: "chatgpt", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
   const cached = await getCached("claude", query, tier);
-  if (cached) return { response: cached };
+  if (cached) { logger.cache("hit", { engine: "claude", tier }); return { response: cached }; }
+  
+  const skip = await shouldSkipProvider("claude");
+  if (skip.skip) { logger.provider("skipped", { provider: "claude", reason: skip.reason }); return { response: "" }; }
   
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) { console.error("[Claude] No API key"); return { response: "" }; }
+  if (!apiKey) { logger.warn("no_api_key", { provider: "claude" }); return { response: "" }; }
   
+  const start = Date.now();
   try {
     const text = await callAnthropic(apiKey, "claude-3-5-haiku-20241022", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
     await setCached("claude", query, text, tier);
+    await recordSuccess("claude");
+    await recordSpend("claude");
+    logger.provider("success", { provider: "claude", model: "claude-3-5-haiku", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    console.error("Claude query error:", error.message);
+    await recordFailure("claude");
+    logger.provider("error", { provider: "claude", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryGrokEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
   const cached = await getCached("grok", query, tier);
-  if (cached) return { response: cached };
+  if (cached) { logger.cache("hit", { engine: "grok", tier }); return { response: cached }; }
+  
+  const skip = await shouldSkipProvider("grok");
+  if (skip.skip) { logger.provider("skipped", { provider: "grok", reason: skip.reason }); return { response: "" }; }
   
   const apiKey = process.env.XAI_API_KEY;
-  if (!apiKey) { console.error("[Grok] No API key"); return { response: "" }; }
+  if (!apiKey) { logger.warn("no_api_key", { provider: "grok" }); return { response: "" }; }
   
+  const start = Date.now();
   try {
     const text = await callOpenAICompatible(
       "https://api.x.ai/v1", apiKey, "grok-3-mini-fast", query, systemPrompt, PROVIDER_TIMEOUTS.grok
     );
     await setCached("grok", query, text, tier);
+    await recordSuccess("grok");
+    await recordSpend("grok");
+    logger.provider("success", { provider: "grok", model: "grok-3-mini-fast", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    console.error("Grok query error:", error.message);
+    await recordFailure("grok");
+    logger.provider("error", { provider: "grok", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
   const cached = await getCached("perplexity", query, tier);
-  if (cached) return { response: cached };
+  if (cached) { logger.cache("hit", { engine: "perplexity", tier }); return { response: cached }; }
+  
+  const skip = await shouldSkipProvider("perplexity");
+  if (skip.skip) { logger.provider("skipped", { provider: "perplexity", reason: skip.reason }); return { response: "" }; }
   
   const apiKey = process.env.PERPLEXITY_API_KEY;
-  if (!apiKey) { console.error("[Perplexity] No API key"); return { response: "" }; }
+  if (!apiKey) { logger.warn("no_api_key", { provider: "perplexity" }); return { response: "" }; }
   
+  const start = Date.now();
   try {
     const text = await callOpenAICompatible(
       "https://api.perplexity.ai", apiKey, "sonar", query, systemPrompt, PROVIDER_TIMEOUTS.perplexity
     );
     await setCached("perplexity", query, text, tier);
+    await recordSuccess("perplexity");
+    await recordSpend("perplexity");
+    logger.provider("success", { provider: "perplexity", model: "sonar", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    console.error("Perplexity query error:", error.message);
+    await recordFailure("perplexity");
+    logger.provider("error", { provider: "perplexity", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }

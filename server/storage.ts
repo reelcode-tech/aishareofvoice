@@ -4,26 +4,31 @@ import postgres from "postgres";
 import { eq, desc, and, sql, gt } from "drizzle-orm";
 
 // Connection — uses DATABASE_URL from environment
-// Workers-compatible: creates connection per-request context
-// The postgres driver uses HTTP/WebSocket under nodejs_compat, so connection
-// creation is lightweight compared to traditional TCP sockets.
-let _db: ReturnType<typeof drizzle> | null = null;
-let _dbUrl: string | null = null;
+// Workers-compatible: creates a fresh connection per request context.
+// The postgres driver needs special config for Workers:
+// - max: 1 (no pooling — Workers isolates are per-request)
+// - prepare: false (Workers don't support prepared statements across requests)
+// - idle_timeout: 0 (close immediately when done)
 
-export function getDb(databaseUrl?: string) {
+function createDb(databaseUrl?: string) {
   const url = databaseUrl || process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL not set");
-  // Reuse connection if URL hasn't changed (same request context)
-  if (_db && _dbUrl === url) return _db;
   const client = postgres(url, { 
-    max: 5,
-    idle_timeout: 20,
+    max: 1,
+    idle_timeout: 0,
     connect_timeout: 10,
+    prepare: false,  // Critical for Workers — no prepared statement caching
   });
-  _db = drizzle(client);
-  _dbUrl = url;
-  return _db;
+  return drizzle(client);
 }
+
+// Get a fresh DB connection — in Workers, each request should get its own
+// to avoid stale connection issues across isolate re-invocations
+function getDb(databaseUrl?: string) {
+  return createDb(databaseUrl);
+}
+
+export { getDb };
 
 export interface IStorage {
   createAudit(audit: InsertAudit): Promise<Audit>;
@@ -150,14 +155,16 @@ export function getStorage(): DatabaseStorage {
   return _storage;
 }
 
-// LazyStorage: same interface as DatabaseStorage but defers DB connection
-// until the first actual method call. Critical for Cloudflare Workers where
-// process.env isn't populated until the request middleware runs.
+// LazyStorage: same interface as DatabaseStorage but creates a FRESH DB connection
+// on every first-method-call. Critical for Cloudflare Workers where:
+// 1. process.env isn't populated until the request middleware runs
+// 2. TCP connections from postgres driver can go stale across isolate re-invocations
 export class LazyStorage implements IStorage {
   private _inner: DatabaseStorage | null = null;
   
   private get inner(): DatabaseStorage {
-    if (!this._inner) this._inner = new DatabaseStorage();
+    // Always create fresh — Workers isolates may reuse stale connections otherwise
+    this._inner = new DatabaseStorage();
     return this._inner;
   }
   
