@@ -1,12 +1,29 @@
 import { type Audit, type InsertAudit, type Lead, audits, leads, ipLimits } from "@shared/schema";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import Database from "better-sqlite3";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import { eq, desc, and, sql, gt } from "drizzle-orm";
 
-const sqlite = new Database("data.db");
-sqlite.pragma("journal_mode = WAL");
+// Connection — uses DATABASE_URL from environment
+// Workers-compatible: creates connection per-request context
+// The postgres driver uses HTTP/WebSocket under nodejs_compat, so connection
+// creation is lightweight compared to traditional TCP sockets.
+let _db: ReturnType<typeof drizzle> | null = null;
+let _dbUrl: string | null = null;
 
-export const db = drizzle(sqlite);
+export function getDb(databaseUrl?: string) {
+  const url = databaseUrl || process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL not set");
+  // Reuse connection if URL hasn't changed (same request context)
+  if (_db && _dbUrl === url) return _db;
+  const client = postgres(url, { 
+    max: 5,
+    idle_timeout: 20,
+    connect_timeout: 10,
+  });
+  _db = drizzle(client);
+  _dbUrl = url;
+  return _db;
+}
 
 export interface IStorage {
   createAudit(audit: InsertAudit): Promise<Audit>;
@@ -23,73 +40,82 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  private db: ReturnType<typeof drizzle>;
+
+  constructor(databaseUrl?: string) {
+    this.db = getDb(databaseUrl);
+  }
+
   async createAudit(audit: InsertAudit): Promise<Audit> {
-    return db.insert(audits).values(audit).returning().get();
+    const [result] = await this.db.insert(audits).values(audit).returning();
+    return result;
   }
 
   async getAudit(id: number): Promise<Audit | undefined> {
-    return db.select().from(audits).where(eq(audits.id, id)).get();
+    const [result] = await this.db.select().from(audits).where(eq(audits.id, id)).limit(1);
+    return result;
   }
 
   async getAuditsByBrand(brandName: string): Promise<Audit[]> {
-    return db.select().from(audits)
+    return this.db.select().from(audits)
       .where(eq(audits.brandName, brandName))
-      .orderBy(desc(audits.createdAt))
-      .all();
+      .orderBy(desc(audits.createdAt));
   }
 
   async getRecentAudits(limit: number = 20): Promise<Audit[]> {
-    return db.select().from(audits)
+    return this.db.select().from(audits)
       .orderBy(desc(audits.createdAt))
-      .limit(limit)
-      .all();
+      .limit(limit);
   }
 
   // ── Lead management ────────────────────────────────────
   async getOrCreateLead(email: string): Promise<Lead> {
     const existing = await this.getLeadByEmail(email);
     if (existing) return existing;
-    return db.insert(leads).values({
+    const [result] = await this.db.insert(leads).values({
       email: email.toLowerCase().trim(),
       auditCount: 0,
-      createdAt: new Date().toISOString(),
-    }).returning().get();
+    }).returning();
+    return result;
   }
 
   async getLeadByEmail(email: string): Promise<Lead | undefined> {
-    return db.select().from(leads)
+    const [result] = await this.db.select().from(leads)
       .where(eq(leads.email, email.toLowerCase().trim()))
-      .get();
+      .limit(1);
+    return result;
   }
 
   async incrementLeadAuditCount(email: string): Promise<Lead> {
-    const now = new Date().toISOString();
+    const now = new Date();
     const lead = await this.getOrCreateLead(email);
-    return db.update(leads)
+    const [result] = await this.db.update(leads)
       .set({
         auditCount: lead.auditCount + 1,
         lastAuditAt: now,
         firstAuditAt: lead.firstAuditAt || now,
       })
       .where(eq(leads.email, email.toLowerCase().trim()))
-      .returning()
-      .get();
+      .returning();
+    return result;
   }
 
   // ── IP rate limiting ───────────────────────────────────
   async checkIpLimit(ip: string, maxPerWindow: number = 3, windowMinutes: number = 60): Promise<{ allowed: boolean; remaining: number }> {
-    const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+    const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000);
+    
     // Clean old entries
-    db.delete(ipLimits).where(
+    await this.db.delete(ipLimits).where(
       sql`${ipLimits.windowStart} < ${windowStart}`
-    ).run();
+    );
+    
     // Count in current window
-    const records = db.select().from(ipLimits)
+    const records = await this.db.select().from(ipLimits)
       .where(and(
         eq(ipLimits.ipAddress, ip),
-        sql`${ipLimits.windowStart} >= ${windowStart}`
-      ))
-      .all();
+        gt(ipLimits.windowStart, windowStart)
+      ));
+    
     const totalCount = records.reduce((sum, r) => sum + r.auditCount, 0);
     return {
       allowed: totalCount < maxPerWindow,
@@ -98,26 +124,50 @@ export class DatabaseStorage implements IStorage {
   }
 
   async incrementIpCount(ip: string): Promise<void> {
-    const now = new Date().toISOString();
-    // Upsert: try to find existing row for this IP in current window, or create new
-    const existing = db.select().from(ipLimits)
+    const [existing] = await this.db.select().from(ipLimits)
       .where(eq(ipLimits.ipAddress, ip))
       .orderBy(desc(ipLimits.windowStart))
-      .limit(1)
-      .get();
+      .limit(1);
+    
     if (existing) {
-      db.update(ipLimits)
+      await this.db.update(ipLimits)
         .set({ auditCount: existing.auditCount + 1 })
-        .where(eq(ipLimits.id, existing.id))
-        .run();
+        .where(eq(ipLimits.id, existing.id));
     } else {
-      db.insert(ipLimits).values({
+      await this.db.insert(ipLimits).values({
         ipAddress: ip,
         auditCount: 1,
-        windowStart: now,
-      }).run();
+      });
     }
   }
 }
 
-export const storage = new DatabaseStorage();
+// Lazy singleton for backward compatibility (don't instantiate at module load)
+// In Workers, process.env isn't set until the request handler runs
+let _storage: DatabaseStorage | null = null;
+export function getStorage(): DatabaseStorage {
+  if (!_storage) _storage = new DatabaseStorage();
+  return _storage;
+}
+
+// LazyStorage: same interface as DatabaseStorage but defers DB connection
+// until the first actual method call. Critical for Cloudflare Workers where
+// process.env isn't populated until the request middleware runs.
+export class LazyStorage implements IStorage {
+  private _inner: DatabaseStorage | null = null;
+  
+  private get inner(): DatabaseStorage {
+    if (!this._inner) this._inner = new DatabaseStorage();
+    return this._inner;
+  }
+  
+  createAudit(audit: InsertAudit) { return this.inner.createAudit(audit); }
+  getAudit(id: number) { return this.inner.getAudit(id); }
+  getAuditsByBrand(brandName: string) { return this.inner.getAuditsByBrand(brandName); }
+  getRecentAudits(limit?: number) { return this.inner.getRecentAudits(limit); }
+  getOrCreateLead(email: string) { return this.inner.getOrCreateLead(email); }
+  incrementLeadAuditCount(email: string) { return this.inner.incrementLeadAuditCount(email); }
+  getLeadByEmail(email: string) { return this.inner.getLeadByEmail(email); }
+  checkIpLimit(ip: string, maxPerWindow: number, windowMinutes: number) { return this.inner.checkIpLimit(ip, maxPerWindow, windowMinutes); }
+  incrementIpCount(ip: string) { return this.inner.incrementIpCount(ip); }
+}

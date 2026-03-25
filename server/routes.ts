@@ -1,59 +1,56 @@
-import type { Express, Request } from "express";
-import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { Hono } from "hono";
+import { type IStorage } from "./storage";
 import { runAudit } from "./engine/audit-runner";
 import { detectBrandFromUrl, detectCategoryWithAI } from "./engine/brand-detection";
 import { discoverCompetitors } from "./engine/competitor-discovery";
 import { auditRequestSchema } from "@shared/schema";
-
-// Extract IP from request (handles proxies)
-function getIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
-  return req.ip || req.socket.remoteAddress || "unknown";
-}
 
 // Max free (snapshot) audits per email
 const MAX_SNAPSHOT_AUDITS_PER_EMAIL = 3;
 // Max audits per IP per hour (without email)
 const MAX_AUDITS_PER_IP_HOUR = 5;
 
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
-  
-  // Detect brand from URL (for the confirmation step)
-  app.post("/api/detect", async (req, res) => {
+// Extract IP from request
+function getIp(c: any): string {
+  return c.req.header("x-forwarded-for")?.split(",")[0]?.trim() 
+    || c.req.header("cf-connecting-ip") 
+    || "unknown";
+}
+
+export function createApiRoutes(storage: IStorage) {
+  const api = new Hono();
+
+  // Detect brand from URL
+  api.post("/detect", async (c) => {
     try {
-      const { url } = req.body;
-      if (!url) return res.status(400).json({ error: "URL required" });
+      const { url } = await c.req.json();
+      if (!url) return c.json({ error: "URL required" }, 400);
       
       const detected = detectBrandFromUrl(url);
       if (!detected) {
-        return res.json({ brand: "Unknown", category: "general", categoryConfidence: "low", categoryReason: "Could not identify brand from URL", categorySource: "ai_inferred" });
+        return c.json({ brand: "Unknown", category: "general", categoryConfidence: "low", categoryReason: "Could not identify brand from URL", categorySource: "ai_inferred" });
       }
       
       if (detected.category) {
-        return res.json({ ...detected, categoryConfidence: "high", categoryReason: `${detected.brand} is a well-known brand in this space`, categorySource: "known_domain" });
+        return c.json({ ...detected, categoryConfidence: "high", categoryReason: `${detected.brand} is a well-known brand in this space`, categorySource: "known_domain" });
       }
       
       console.log(`[Detect] Unknown domain, using AI to infer category for ${detected.brand}`);
       const aiResult = await detectCategoryWithAI(url, detected.brand);
       console.log(`[Detect] AI inferred category: "${aiResult.category}" (${aiResult.confidence})`);
       
-      res.json({ brand: detected.brand, category: aiResult.category, categoryConfidence: aiResult.confidence, categoryReason: aiResult.reason, categorySource: aiResult.source });
+      return c.json({ brand: detected.brand, category: aiResult.category, categoryConfidence: aiResult.confidence, categoryReason: aiResult.reason, categorySource: aiResult.source });
     } catch (error: any) {
       console.error("[Detect Error]", error);
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
   
   // Combined detect + competitor discovery
-  app.post("/api/detect-all", async (req, res) => {
+  api.post("/detect-all", async (c) => {
     try {
-      const { url } = req.body;
-      if (!url) return res.status(400).json({ error: "URL required" });
+      const { url } = await c.req.json();
+      if (!url) return c.json({ error: "URL required" }, 400);
       
       const detected = detectBrandFromUrl(url);
       const brand = detected?.brand || "Unknown";
@@ -61,9 +58,8 @@ export async function registerRoutes(
       if (detected?.category) {
         console.log(`[DetectAll] Known domain ${brand} in ${detected.category}, fetching competitors...`);
         const competitors = await discoverCompetitors(brand, detected.category, url);
-        return res.json({
-          brand,
-          category: detected.category,
+        return c.json({
+          brand, category: detected.category,
           categoryConfidence: "high",
           categoryReason: `${brand} is a well-known brand in this space`,
           categorySource: "known_domain",
@@ -78,9 +74,8 @@ export async function registerRoutes(
       const competitors = await discoverCompetitors(brand, aiResult.category || "general", url);
       console.log(`[DetectAll] Found ${competitors.length} competitors`);
       
-      res.json({
-        brand,
-        category: aiResult.category,
+      return c.json({
+        brand, category: aiResult.category,
         categoryConfidence: aiResult.confidence,
         categoryReason: aiResult.reason,
         categorySource: aiResult.source,
@@ -88,38 +83,37 @@ export async function registerRoutes(
       });
     } catch (error: any) {
       console.error("[DetectAll Error]", error);
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
 
   // Discover competitors
-  app.post("/api/discover-competitors", async (req, res) => {
+  api.post("/discover-competitors", async (c) => {
     try {
-      const { brandName, category, url } = req.body;
-      if (!brandName) return res.status(400).json({ error: "Brand name required" });
+      const { brandName, category, url } = await c.req.json();
+      if (!brandName) return c.json({ error: "Brand name required" }, 400);
       
       const cat = category || "general";
       console.log(`[Discover] Finding competitors for ${brandName} in ${cat}`);
-      
       const competitors = await discoverCompetitors(brandName, cat, url);
       console.log(`[Discover] Found ${competitors.length} competitors: ${competitors.join(", ")}`);
       
-      res.json({ competitors });
+      return c.json({ competitors });
     } catch (error: any) {
       console.error("[Discover Error]", error);
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
 
-  // ── Email gate: register lead ────────────────────────────
-  app.post("/api/lead", async (req, res) => {
+  // Email gate: register lead
+  api.post("/lead", async (c) => {
     try {
-      const { email } = req.body;
+      const { email } = await c.req.json();
       if (!email || typeof email !== "string" || !email.includes("@")) {
-        return res.status(400).json({ error: "Valid email required" });
+        return c.json({ error: "Valid email required" }, 400);
       }
       const lead = await storage.getOrCreateLead(email);
-      res.json({
+      return c.json({
         email: lead.email,
         auditCount: lead.auditCount,
         canAudit: lead.auditCount < MAX_SNAPSHOT_AUDITS_PER_EMAIL,
@@ -127,46 +121,42 @@ export async function registerRoutes(
       });
     } catch (error: any) {
       console.error("[Lead Error]", error);
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
   
-  // Run a full audit — email gate for snapshot only, paid tiers bypass
-  app.post("/api/audit", async (req, res) => {
+  // Run a full audit
+  api.post("/audit", async (c) => {
     try {
-      const parsed = auditRequestSchema.safeParse(req.body);
+      const body = await c.req.json();
+      const parsed = auditRequestSchema.safeParse(body);
       if (!parsed.success) {
-        return res.status(400).json({ error: "Invalid request: " + parsed.error.issues.map(i => i.message).join(", ") });
+        return c.json({ error: "Invalid request: " + parsed.error.issues.map(i => i.message).join(", ") }, 400);
       }
       
       const data = parsed.data;
-      const ip = getIp(req);
+      const ip = getIp(c);
       
-      // ── Email gate for snapshot tier ONLY ──
+      // Email gate for snapshot tier ONLY
       if (data.tier === "snapshot") {
         if (!data.email) {
-          return res.status(403).json({ error: "email_required", message: "Email is required to run a free audit." });
+          return c.json({ error: "email_required", message: "Email is required to run a free audit." }, 403);
         }
-        // Check per-email limit
         const lead = await storage.getOrCreateLead(data.email);
         if (lead.auditCount >= MAX_SNAPSHOT_AUDITS_PER_EMAIL) {
-          return res.status(429).json({
+          return c.json({
             error: "email_limit_reached",
             message: `You've used all ${MAX_SNAPSHOT_AUDITS_PER_EMAIL} free audits. Upgrade to Monitor for unlimited audits.`,
             auditCount: lead.auditCount,
-          });
+          }, 429);
         }
       }
-      // Monitor and Agency tiers: no email gate, no audit limits
       
-      // ── IP rate limiting (snapshot only) ──
+      // IP rate limiting (snapshot only)
       if (data.tier === "snapshot") {
         const ipCheck = await storage.checkIpLimit(ip, MAX_AUDITS_PER_IP_HOUR, 60);
         if (!ipCheck.allowed) {
-          return res.status(429).json({
-            error: "rate_limited",
-            message: "Too many audits from this location. Try again in an hour.",
-          });
+          return c.json({ error: "rate_limited", message: "Too many audits from this location. Try again in an hour." }, 429);
         }
       }
       
@@ -199,18 +189,18 @@ export async function registerRoutes(
         confidenceHigh: result.scores.overall.confidenceHigh,
         marginOfError: String(result.scores.overall.marginOfError),
         observations: result.scores.overall.observations,
-        engineResults: JSON.stringify({
+        engineResults: {
           perEngine: result.scores.perEngine,
           dimensions: result.scores.dimensions,
-        }),
-        competitors: JSON.stringify(result.scores.competitors),
-        queryResults: JSON.stringify(result.scores.queryDetails),
-        sentimentData: JSON.stringify(result.scores.sentimentBreakdown),
-        citationData: JSON.stringify(result.engineResults.flatMap(r => r.citations)),
-        geoAudit: JSON.stringify(result.geoAudit),
-        recommendations: JSON.stringify(result.recommendations),
-        customCompetitors: JSON.stringify(result.customCompetitors),
-        createdAt: result.timestamp,
+        },
+        competitors: result.scores.competitors,
+        queryResults: result.scores.queryDetails,
+        sentimentData: result.scores.sentimentBreakdown,
+        citationData: result.engineResults.flatMap(r => r.citations),
+        geoAudit: result.geoAudit,
+        recommendations: result.recommendations,
+        customCompetitors: result.customCompetitors,
+        createdAt: new Date(),
       });
       
       // Track lead usage + IP (snapshot only)
@@ -219,28 +209,28 @@ export async function registerRoutes(
         await storage.incrementIpCount(ip);
       }
       
-      res.json({ id: saved.id, ...result });
+      return c.json({ id: saved.id, ...result });
     } catch (error: any) {
       console.error("[Audit Error]", error);
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
   
   // Get a specific audit result
-  app.get("/api/audit/:id", async (req, res) => {
+  api.get("/audit/:id", async (c) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(c.req.param("id"));
       const audit = await storage.getAudit(id);
-      if (!audit) return res.status(404).json({ error: "Audit not found" });
+      if (!audit) return c.json({ error: "Audit not found" }, 404);
       
-      const engineResults = JSON.parse(audit.engineResults || "[]");
-      const competitors = JSON.parse(audit.competitors || "[]");
-      const queryResults = JSON.parse(audit.queryResults || "[]");
-      const sentimentData = JSON.parse(audit.sentimentData || "{}");
-      const citationData = JSON.parse(audit.citationData || "[]");
-      const geoAudit = JSON.parse(audit.geoAudit || "{}");
-      const recommendations = JSON.parse(audit.recommendations || "[]");
-      const customCompetitors = JSON.parse(audit.customCompetitors || "[]");
+      const engineResults = typeof audit.engineResults === 'string' ? JSON.parse(audit.engineResults) : (audit.engineResults || {});
+      const competitors = typeof audit.competitors === 'string' ? JSON.parse(audit.competitors) : (audit.competitors || []);
+      const queryResults = typeof audit.queryResults === 'string' ? JSON.parse(audit.queryResults) : (audit.queryResults || []);
+      const sentimentData = typeof audit.sentimentData === 'string' ? JSON.parse(audit.sentimentData) : (audit.sentimentData || {});
+      const citationData = typeof audit.citationData === 'string' ? JSON.parse(audit.citationData) : (audit.citationData || []);
+      const geoAudit = typeof audit.geoAudit === 'string' ? JSON.parse(audit.geoAudit) : (audit.geoAudit || {});
+      const recommendations = typeof audit.recommendations === 'string' ? JSON.parse(audit.recommendations) : (audit.recommendations || []);
+      const customCompetitors = typeof audit.customCompetitors === 'string' ? JSON.parse(audit.customCompetitors) : (audit.customCompetitors || []);
       
       const scores = {
         overall: {
@@ -258,7 +248,7 @@ export async function registerRoutes(
         queryDetails: queryResults,
       };
       
-      res.json({
+      return c.json({
         id: audit.id,
         brandName: audit.brandName,
         brandUrl: audit.brandUrl,
@@ -272,15 +262,15 @@ export async function registerRoutes(
         customCompetitors,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
   
   // Get audit history for a brand
-  app.get("/api/history/:brandName", async (req, res) => {
+  api.get("/history/:brandName", async (c) => {
     try {
-      const history = await storage.getAuditsByBrand(req.params.brandName);
-      res.json(history.map(a => ({
+      const history = await storage.getAuditsByBrand(c.req.param("brandName"));
+      return c.json(history.map(a => ({
         id: a.id,
         brandName: a.brandName,
         overallScore: a.overallScore,
@@ -289,15 +279,15 @@ export async function registerRoutes(
         createdAt: a.createdAt,
       })));
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
   
   // Recent audits
-  app.get("/api/recent", async (_req, res) => {
+  api.get("/recent", async (c) => {
     try {
       const recent = await storage.getRecentAudits(10);
-      res.json(recent.map(a => ({
+      return c.json(recent.map(a => ({
         id: a.id,
         brandName: a.brandName,
         brandUrl: a.brandUrl,
@@ -307,9 +297,9 @@ export async function registerRoutes(
         createdAt: a.createdAt,
       })));
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return c.json({ error: error.message }, 500);
     }
   });
 
-  return httpServer;
+  return api;
 }

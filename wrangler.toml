@@ -1,0 +1,17 @@
+name = "aishareofvoice"
+main = "dist/worker.mjs"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Account ID
+account_id = "43c91bf257c23a54bd6e6d8a30103c2e"
+
+# Static assets (built frontend)
+[assets]
+directory = "dist/public"
+
+# Environment variables (secrets set via `wrangler secret put`)
+# All sensitive values are stored as secrets, not in this file.
+# Use: wrangler secret put DATABASE_URL
+#      wrangler secret put UPSTASH_REDIS_REST_URL
+#      ... etc.

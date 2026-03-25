@@ -1,11 +1,10 @@
-// Multi-engine AI query layer
+// Multi-engine AI query layer — Production version
+// Uses direct API calls to each provider with explicit API keys
 // Snapshot: ChatGPT + Gemini (2 engines, cheapest)
 // Monitor: + Claude (3 engines)
 // Agency: + Grok + Perplexity (5 engines)
 
-import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai";
-import { responseCache } from "./cache";
+import { getCached, setCached } from "./cache";
 
 interface EngineResult {
   engine: string;
@@ -22,19 +21,18 @@ interface EngineResult {
 interface EngineConfig {
   name: string;
   tier: "snapshot" | "monitor" | "agency";
-  queryFn: (query: string, systemPrompt?: string) => Promise<{ response: string }>;
+  queryFn: (query: string, systemPrompt?: string, tier?: string) => Promise<{ response: string }>;
   model: string;
 }
 
-// Phrases that should never be extracted as brand names
+// ── Brand noise filtering (unchanged from original) ─────────────────
+
 const BRAND_NOISE_PATTERNS = new Set([
-  // English ranking/editorial labels
   "best overall", "best for", "best value", "best budget", "best premium",
   "best luxury", "best selling", "runner up", "runner-up", "runners up",
   "honorable mention", "editor's choice", "editor pick", "editors pick",
   "our pick", "top pick", "top choice", "our top", "our favorite",
   "most popular", "most affordable", "most comfortable", "most durable",
-  // Product attributes / category terms
   "key features", "pros and cons", "pros", "cons", "features",
   "firmness", "firmness level", "zoned support", "lumbar support",
   "memory foam", "hybrid mattress", "pillow top", "coil count",
@@ -42,17 +40,14 @@ const BRAND_NOISE_PATTERNS = new Set([
   "trial and warranty", "trial period", "cooling", "feel", "type",
   "shipping", "price", "budget", "value", "construction",
   "motion isolation", "edge support", "durability", "comfort",
-  // Article structure words
   "things to consider", "what to look for", "how to choose",
   "final thoughts", "the bottom line", "in conclusion", "summary",
   "important note", "disclaimer", "frequently asked", "faq",
   "the verdict", "performance metrics", "phase",
-  // Indonesian noise (ChatGPT sometimes responds in other languages)
   "kelebihan", "kekurangan", "catatan praktis", "keunikan",
   "cocok untuk", "tipe utama", "rasanya", "varian utama",
   "pertimbangkan hal", "apa itu", "harga relatif",
   "pilihan kekerasan", "dukungan dan daya tahan",
-  // Common false positives from AI list formatting
   "why worth it", "why consider", "what to know", "price vibe",
   "how you sleep", "best for side sleepers", "best for back sleepers",
   "best for back pain", "best for cooling", "best for pressure relief",
@@ -62,7 +57,6 @@ const BRAND_NOISE_PATTERNS = new Set([
   "prorated", "non-prorated", "tech",
 ]);
 
-// Words that indicate a descriptor, not a brand
 const DESCRIPTOR_STARTS = [
   "best ", "top ", "most ", "our ", "the best", "a great", "an excellent",
   "highly ", "overall ", "also ", "another ", "other ",
@@ -73,33 +67,19 @@ const DESCRIPTOR_STARTS = [
 
 function isBrandNoise(candidate: string): boolean {
   const lower = candidate.toLowerCase().trim();
-  
-  // Exact noise phrase matches
   if (BRAND_NOISE_PATTERNS.has(lower)) return true;
-  
-  // Starts with a descriptor word
   for (const prefix of DESCRIPTOR_STARTS) {
     if (lower.startsWith(prefix)) return true;
   }
-  
-  // All lowercase = likely not a brand (brands are usually capitalized)
   if (candidate === candidate.toLowerCase() && candidate.length > 3) return true;
-  
-  // Too many words (brands are rarely more than 4 words)
   if (candidate.split(/\s+/).length > 4) return true;
-  
-  // Contains only generic adjective-like words
   const genericWords = new Set(["premium", "luxury", "budget", "affordable", "comfortable", "firm", "soft", "medium", "organic", "natural", "hybrid", "classic", "original", "standard", "basic", "advanced", "professional", "ultimate", "elite", "signature"]);
   const words = lower.split(/\s+/);
   if (words.every(w => genericWords.has(w))) return true;
-  
-  // Ends with a product descriptor or user persona (sub-product, not brand)
   const productSuffixes = [" mattress", " pillow", " topper", " sheet", " base", " frame", " foundation", " protector", " sleepers", " sleeper", " people", " options", " position", " preferences"];
   for (const suffix of productSuffixes) {
     if (lower.endsWith(suffix)) return true;
   }
-  
-  // Single-word common English words that aren't brands
   if (words.length === 1) {
     const commonWords = new Set(["cooling", "feel", "type", "shipping", "price", "budget", "value",
       "warranty", "trial", "pros", "cons", "features", "construction", "materials",
@@ -109,27 +89,17 @@ function isBrandNoise(candidate: string): boolean {
       "excellent", "superior", "average", "high", "low", "moderate",
       "certifications", "certification", "materials", "ingredients", "specifications",
       "temperature", "breathability", "firmness", "density",
-      // Non-English common words appearing in AI responses
       "kelebihan", "kekurangan", "keunikan", "rasanya", "cocok",
     ]);
     if (commonWords.has(lower)) return true;
   }
-  
   return false;
 }
 
-// Additional validation for extracted brand candidates
-// Returns true if the candidate looks like a real brand, false if it's noise
 function isLikelyBrand(candidate: string): boolean {
   const lower = candidate.toLowerCase().trim();
-  
-  // Too short or too long
   if (candidate.length < 2 || candidate.length > 35) return false;
-  
-  // Too many words (real brand names are rarely >4 words)
   if (candidate.split(/\s+/).length > 4) return false;
-  
-  // Reject common instruction/heading patterns
   const instructionPatterns = [
     /^(start|try|use|look|apply|wear|pick|choose|consider|check|avoid|find|get|make|do|don'?t|if you)/i,
     /^(why|how|what|when|where|which|who|tip|note|key|core|quick|example|ideal)/i,
@@ -144,8 +114,6 @@ function isLikelyBrand(candidate: string): boolean {
   for (const p of instructionPatterns) {
     if (p.test(candidate)) return false;
   }
-  
-  // Reject ingredient/attribute names common in skincare, mattresses, etc.
   const ingredientNoiseWords = new Set([
     "ceramides", "niacinamide", "retinol", "hyaluronic acid", "salicylic acid",
     "vitamin c", "vitamin e", "bakuchiol", "peptides", "collagen", "spf",
@@ -153,11 +121,11 @@ function isLikelyBrand(candidate: string): boolean {
     "fragrance", "organic", "vegan", "cruelty",
   ]);
   if (ingredientNoiseWords.has(lower)) return false;
-  
   return true;
 }
 
-// Extract brands mentioned in AI response
+// ── Brand extraction & analysis (unchanged) ─────────────────────────
+
 function extractBrands(response: string, targetBrand: string): {
   mentionsBrand: boolean;
   mentionedBrands: string[];
@@ -165,42 +133,33 @@ function extractBrands(response: string, targetBrand: string): {
   const text = response.toLowerCase();
   const targetLower = targetBrand.toLowerCase();
   
-  // Check if target brand is mentioned
   const mentionsBrand = text.includes(targetLower) || 
     text.includes(targetLower.replace(/['']/g, "")) ||
     text.includes(targetLower.replace(/\s+/g, ""));
   
-  // Primary extraction: bold text (**BrandName**) — most reliable since we instruct the AI to bold brands
   const mentionedBrands = new Set<string>();
   
-  // Pattern 1 (highest priority): **Bold brand names** — the system prompt tells AI to do this
-  const boldPattern = /\*\*([A-Z][A-Za-z\s&'.()\-\/]+?)\*\*/g;
+  const boldPattern = /\*\*([A-Z][A-Za-z\s&'.()\/\-]+?)\*\*/g;
   let match;
   while ((match = boldPattern.exec(response)) !== null) {
     const brand = match[1].trim().replace(/\*+/g, "");
     const brandLower = brand.toLowerCase();
-    
     if (isBrandNoise(brand)) continue;
     if (!isLikelyBrand(brand)) continue;
     if (brandLower === targetLower) continue;
     if (brandLower.startsWith(targetLower + " ")) continue;
-    
     mentionedBrands.add(brand);
   }
   
-  // Pattern 2 (fallback): Numbered list items that look like brand names
-  // Only use if bold extraction found very few results
   if (mentionedBrands.size < 3) {
-    const listPattern = /\d+\.\s*\*?\*?([A-Z][A-Za-z\s&'.()\-]+?)(?:\*?\*?\s*[\-–—:]|\s*\n)/g;
+    const listPattern = /\d+\.\s*\*?\*?([A-Z][A-Za-z\s&'.()\/\-]+?)(?:\*?\*?\s*[\-–—:]|\s*\n)/g;
     while ((match = listPattern.exec(response)) !== null) {
       const brand = match[1].trim().replace(/\*+/g, "");
       const brandLower = brand.toLowerCase();
-      
       if (isBrandNoise(brand)) continue;
       if (!isLikelyBrand(brand)) continue;
       if (brandLower === targetLower) continue;
       if (brandLower.startsWith(targetLower + " ")) continue;
-      
       mentionedBrands.add(brand);
     }
   }
@@ -208,23 +167,18 @@ function extractBrands(response: string, targetBrand: string): {
   return { mentionsBrand, mentionedBrands: Array.from(mentionedBrands) };
 }
 
-// Extract sentiment about a brand from response
 function analyzeSentiment(response: string, brand: string): "positive" | "neutral" | "negative" | "not_mentioned" {
   const text = response.toLowerCase();
   const brandLower = brand.toLowerCase();
-  
   if (!text.includes(brandLower)) return "not_mentioned";
   
-  // Find sentences containing the brand
   const sentences = response.split(/[.!?]\s+/);
   const brandSentences = sentences.filter(s => s.toLowerCase().includes(brandLower));
   
   const positiveWords = ["excellent", "great", "best", "top", "recommended", "popular", "trusted", "quality", "effective", "innovative", "leading", "outstanding", "superior"];
   const negativeWords = ["poor", "weak", "lacking", "limited", "disappointing", "overpriced", "mediocre", "behind", "inferior"];
   
-  let posCount = 0;
-  let negCount = 0;
-  
+  let posCount = 0, negCount = 0;
   for (const sentence of brandSentences) {
     const lower = sentence.toLowerCase();
     posCount += positiveWords.filter(w => lower.includes(w)).length;
@@ -236,15 +190,12 @@ function analyzeSentiment(response: string, brand: string): "positive" | "neutra
   return "neutral";
 }
 
-// Extract cited URLs from response
 function extractCitations(response: string): string[] {
   const urlPattern = /https?:\/\/[^\s\)]+/g;
   const matches = response.match(urlPattern) || [];
   return [...new Set(matches)];
 }
 
-// System instruction that makes AI responses structured and brand-focused.
-// This is the KEY to accurate brand extraction — we tell the AI exactly what format to use.
 function getBrandExtractionSystemPrompt(category: string): string {
   return `You are a consumer research assistant. When answering questions about products or services, always:
 
@@ -261,25 +212,143 @@ Example BAD response (don't do this):
 **Strengths**: Good features. **Tip**: Start with free tier. **AI Features**: Built-in automation.`;
 }
 
-// ── Engine query functions ──────────────────────────────────────────
+// ── Provider-specific API clients ───────────────────────────────────
 
-async function queryGemini(query: string, systemPrompt?: string): Promise<{ response: string }> {
-  // Check cache first
-  const cached = responseCache.get("gemini", query);
+// Per-provider timeout budgets (milliseconds) per v3 spec §3
+const PROVIDER_TIMEOUTS: Record<string, number> = {
+  openai: 10_000,
+  gemini: 12_000,
+  anthropic: 15_000,
+  grok: 12_000,
+  perplexity: 20_000,
+};
+
+// Helper: fetch with timeout using AbortController
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+// Helper: call OpenAI-compatible chat completions API
+async function callOpenAICompatible(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  query: string,
+  systemPrompt?: string,
+  timeoutMs: number = 10_000
+): Promise<string> {
+  const response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
+        { role: "user", content: query },
+      ],
+      max_tokens: 1024,
+    }),
+  }, timeoutMs);
+  
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`${model} API error ${response.status}: ${err.slice(0, 200)}`);
+  }
+  
+  const data = await response.json() as any;
+  return data.choices?.[0]?.message?.content || "";
+}
+
+// Helper: call Anthropic Messages API
+async function callAnthropic(
+  apiKey: string,
+  model: string,
+  query: string,
+  systemPrompt?: string,
+  timeoutMs: number = 15_000
+): Promise<string> {
+  const response = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      ...(systemPrompt ? { system: systemPrompt } : {}),
+      messages: [{ role: "user", content: query }],
+    }),
+  }, timeoutMs);
+  
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Claude API error ${response.status}: ${err.slice(0, 200)}`);
+  }
+  
+  const data = await response.json() as any;
+  return data.content?.map((c: any) => c.type === "text" ? c.text : "").join("") || "";
+}
+
+// Helper: call Google Gemini API
+async function callGemini(
+  apiKey: string,
+  model: string,
+  query: string,
+  systemPrompt?: string,
+  timeoutMs: number = 12_000
+): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const contents: any[] = [];
+  
+  if (systemPrompt) {
+    // Gemini uses system_instruction field
+  }
+  
+  contents.push({ role: "user", parts: [{ text: query }] });
+  
+  const response = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
+      contents,
+      generationConfig: { maxOutputTokens: 1024 },
+    }),
+  }, timeoutMs);
+  
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gemini API error ${response.status}: ${err.slice(0, 200)}`);
+  }
+  
+  const data = await response.json() as any;
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+}
+
+// ── Engine query functions (async cache + direct API) ───────────────
+
+async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  const cached = await getCached("gemini", query, tier);
   if (cached) return { response: cached };
   
-  const client = new OpenAI();
+  const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+  if (!apiKey) { console.error("[Gemini] No API key"); return { response: "" }; }
+  
   try {
-    const response = await client.responses.create({
-      model: "gemini_3_flash",
-      instructions: systemPrompt || "Always respond in English.",
-      input: query,
-    });
-    const text = typeof response.output === 'string' 
-      ? response.output 
-      : response.output_text || JSON.stringify(response.output);
-    
-    responseCache.set("gemini", query, text);
+    const text = await callGemini(apiKey, "gemini-2.0-flash", query, systemPrompt, PROVIDER_TIMEOUTS.gemini);
+    await setCached("gemini", query, text, tier);
     return { response: text };
   } catch (error: any) {
     console.error("Gemini query error:", error.message);
@@ -287,23 +356,18 @@ async function queryGemini(query: string, systemPrompt?: string): Promise<{ resp
   }
 }
 
-async function queryChatGPT(query: string, systemPrompt?: string): Promise<{ response: string }> {
-  // Check cache first
-  const cached = responseCache.get("chatgpt", query);
+async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  const cached = await getCached("chatgpt", query, tier);
   if (cached) return { response: cached };
   
-  const client = new OpenAI();
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) { console.error("[ChatGPT] No API key"); return { response: "" }; }
+  
   try {
-    const response = await client.responses.create({
-      model: "gpt5_nano",
-      instructions: systemPrompt || "Always respond in English.",
-      input: query,
-    });
-    const text = typeof response.output === 'string' 
-      ? response.output 
-      : response.output_text || JSON.stringify(response.output);
-    
-    responseCache.set("chatgpt", query, text);
+    const text = await callOpenAICompatible(
+      "https://api.openai.com/v1", apiKey, "gpt-4o-mini", query, systemPrompt, PROVIDER_TIMEOUTS.openai
+    );
+    await setCached("chatgpt", query, text, tier);
     return { response: text };
   } catch (error: any) {
     console.error("ChatGPT query error:", error.message);
@@ -311,22 +375,16 @@ async function queryChatGPT(query: string, systemPrompt?: string): Promise<{ res
   }
 }
 
-async function queryClaude(query: string, systemPrompt?: string): Promise<{ response: string }> {
-  // Check cache first
-  const cached = responseCache.get("claude", query);
+async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  const cached = await getCached("claude", query, tier);
   if (cached) return { response: cached };
   
-  const client = new Anthropic();
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) { console.error("[Claude] No API key"); return { response: "" }; }
+  
   try {
-    const message = await client.messages.create({
-      model: "claude_haiku_4_5",
-      max_tokens: 1024,
-      system: systemPrompt || "Always respond in English.",
-      messages: [{ role: "user", content: query }],
-    });
-    const text = message.content.map((c: any) => c.type === "text" ? c.text : "").join("");
-    
-    responseCache.set("claude", query, text);
+    const text = await callAnthropic(apiKey, "claude-3-5-haiku-20241022", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
+    await setCached("claude", query, text, tier);
     return { response: text };
   } catch (error: any) {
     console.error("Claude query error:", error.message);
@@ -334,24 +392,18 @@ async function queryClaude(query: string, systemPrompt?: string): Promise<{ resp
   }
 }
 
-// Grok (Agency tier) — uses OpenAI-compatible API via cheapest model
-async function queryGrok(query: string, systemPrompt?: string): Promise<{ response: string }> {
-  // Check cache first
-  const cached = responseCache.get("grok", query);
+async function queryGrokEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  const cached = await getCached("grok", query, tier);
   if (cached) return { response: cached };
   
-  const client = new OpenAI();
+  const apiKey = process.env.XAI_API_KEY;
+  if (!apiKey) { console.error("[Grok] No API key"); return { response: "" }; }
+  
   try {
-    const response = await client.responses.create({
-      model: "grok_3_mini",
-      instructions: systemPrompt || "Always respond in English.",
-      input: query,
-    });
-    const text = typeof response.output === 'string' 
-      ? response.output 
-      : response.output_text || JSON.stringify(response.output);
-    
-    responseCache.set("grok", query, text);
+    const text = await callOpenAICompatible(
+      "https://api.x.ai/v1", apiKey, "grok-3-mini-fast", query, systemPrompt, PROVIDER_TIMEOUTS.grok
+    );
+    await setCached("grok", query, text, tier);
     return { response: text };
   } catch (error: any) {
     console.error("Grok query error:", error.message);
@@ -359,24 +411,18 @@ async function queryGrok(query: string, systemPrompt?: string): Promise<{ respon
   }
 }
 
-// Perplexity (Agency tier) — uses OpenAI-compatible API
-async function queryPerplexity(query: string, systemPrompt?: string): Promise<{ response: string }> {
-  // Check cache first
-  const cached = responseCache.get("perplexity", query);
+async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  const cached = await getCached("perplexity", query, tier);
   if (cached) return { response: cached };
   
-  const client = new OpenAI();
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) { console.error("[Perplexity] No API key"); return { response: "" }; }
+  
   try {
-    const response = await client.responses.create({
-      model: "sonar",
-      instructions: systemPrompt || "Always respond in English.",
-      input: query,
-    });
-    const text = typeof response.output === 'string' 
-      ? response.output 
-      : response.output_text || JSON.stringify(response.output);
-    
-    responseCache.set("perplexity", query, text);
+    const text = await callOpenAICompatible(
+      "https://api.perplexity.ai", apiKey, "sonar", query, systemPrompt, PROVIDER_TIMEOUTS.perplexity
+    );
+    await setCached("perplexity", query, text, tier);
     return { response: text };
   } catch (error: any) {
     console.error("Perplexity query error:", error.message);
@@ -384,20 +430,18 @@ async function queryPerplexity(query: string, systemPrompt?: string): Promise<{ 
   }
 }
 
+// ── Engine registry ─────────────────────────────────────────────────
+
 export function getEnginesForTier(tier: string): EngineConfig[] {
   const engines: EngineConfig[] = [
-    { name: "ChatGPT", tier: "snapshot", queryFn: queryChatGPT, model: "gpt5_nano" },
-    { name: "Gemini", tier: "snapshot", queryFn: queryGemini, model: "gemini_3_flash" },
-    { name: "Claude", tier: "monitor", queryFn: queryClaude, model: "claude_haiku_4_5" },
-    { name: "Grok", tier: "agency", queryFn: queryGrok, model: "grok_3_mini" },
-    { name: "Perplexity", tier: "agency", queryFn: queryPerplexity, model: "sonar" },
+    { name: "ChatGPT", tier: "snapshot", queryFn: queryChatGPTEngine, model: "gpt-4o-mini" },
+    { name: "Gemini", tier: "snapshot", queryFn: queryGeminiEngine, model: "gemini-2.0-flash" },
+    { name: "Claude", tier: "monitor", queryFn: queryClaudeEngine, model: "claude-3-5-haiku" },
+    { name: "Grok", tier: "agency", queryFn: queryGrokEngine, model: "grok-3-mini-fast" },
+    { name: "Perplexity", tier: "agency", queryFn: queryPerplexityEngine, model: "sonar" },
   ];
   
-  // Snapshot: 2 engines (ChatGPT + Gemini)
-  // Monitor: 3 engines (+ Claude)
-  // Agency: 5 engines (+ Grok + Perplexity)
   const tierOrder = ["snapshot", "monitor", "agency"];
-  // Also support legacy tier names during transition
   const legacyMap: Record<string, string> = { "free": "snapshot", "pro": "monitor", "enterprise": "agency" };
   const normalizedTier = legacyMap[tier] || tier;
   const tierIndex = tierOrder.indexOf(normalizedTier);
@@ -405,9 +449,9 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
   return engines.filter(e => tierOrder.indexOf(e.tier) <= tierIndex);
 }
 
-// ── Concurrency-controlled batch query execution ──────────────────
+// ── Concurrency-controlled batch execution ──────────────────────────
 
-const MAX_CONCURRENT = 8; // Max parallel API calls
+const MAX_CONCURRENT = 8;
 
 async function runWithConcurrency<T>(
   tasks: (() => Promise<T>)[],
@@ -435,14 +479,14 @@ export async function queryEnginesBatch(
   engines: EngineConfig[],
   queries: { query: string; intent: string }[],
   targetBrand: string,
-  category: string = "general"
+  category: string = "general",
+  tier: string = "snapshot"
 ): Promise<EngineResult[]> {
   const systemPrompt = getBrandExtractionSystemPrompt(category);
   
-  // Create all tasks
   const tasks = engines.flatMap(engine =>
     queries.map(q => async (): Promise<EngineResult> => {
-      const result = await engine.queryFn(q.query, systemPrompt);
+      const result = await engine.queryFn(q.query, systemPrompt, tier);
       const { mentionsBrand, mentionedBrands } = extractBrands(result.response, targetBrand);
       const sentiment = analyzeSentiment(result.response, targetBrand);
       const citations = extractCitations(result.response);
@@ -464,7 +508,7 @@ export async function queryEnginesBatch(
   console.log(`[Engines] Running ${tasks.length} queries with max ${MAX_CONCURRENT} concurrent...`);
   const startTime = Date.now();
   const results = await runWithConcurrency(tasks);
-  console.log(`[Engines] Completed ${tasks.length} queries in ${((Date.now() - startTime) / 1000).toFixed(1)}s (cache: ${responseCache.size} entries)`);
+  console.log(`[Engines] Completed ${tasks.length} queries in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
   
   return results;
 }
@@ -473,11 +517,11 @@ export async function queryEngine(
   engine: EngineConfig,
   query: string,
   targetBrand: string,
-  category: string = "general"
+  category: string = "general",
+  tier: string = "snapshot"
 ): Promise<EngineResult> {
-  // Pass a category-aware system prompt to get structured brand mentions
   const systemPrompt = getBrandExtractionSystemPrompt(category);
-  const result = await engine.queryFn(query, systemPrompt);
+  const result = await engine.queryFn(query, systemPrompt, tier);
   const { mentionsBrand, mentionedBrands } = extractBrands(result.response, targetBrand);
   const sentiment = analyzeSentiment(result.response, targetBrand);
   const citations = extractCitations(result.response);

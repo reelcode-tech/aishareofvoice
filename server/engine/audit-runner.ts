@@ -45,7 +45,7 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
   // The GEO audit is purely HTTP fetches — runs concurrently with AI queries
   const [geoAudit, engineResults] = await Promise.all([
     runGeoAudit(url),
-    queryEnginesBatch(engines, queries, brandName, category),
+    queryEnginesBatch(engines, queries, brandName, category, tier),
   ]);
   
   const queryTime = ((Date.now() - startTime) / 1000).toFixed(1);

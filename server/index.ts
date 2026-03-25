@@ -1,103 +1,57 @@
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
-import { createServer } from "http";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import { serveStatic } from "@hono/node-server/serve-static";
+import { serve } from "@hono/node-server";
+import { createApiRoutes } from "./routes";
+import { DatabaseStorage } from "./storage";
 
-const app = express();
-const httpServer = createServer(app);
-
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
+// Load .env in development
+if (process.env.NODE_ENV !== "production") {
+  const { config } = await import("dotenv");
+  config();
 }
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
+const app = new Hono();
 
-app.use(express.urlencoded({ extended: false }));
+// Middleware
+app.use("*", logger());
+app.use("*", cors({
+  origin: "*",
+  allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowHeaders: ["Content-Type", "Authorization"],
+}));
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+// Initialize storage with database URL
+const storage = new DatabaseStorage(process.env.DATABASE_URL);
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+// Mount API routes
+const apiRoutes = createApiRoutes(storage);
+app.route("/api", apiRoutes);
+
+// Health check
+app.get("/health", (c) => c.json({ 
+  status: "ok", 
+  timestamp: new Date().toISOString(),
+  version: "2.0.0",
+}));
+
+// Serve static frontend in production
+if (process.env.NODE_ENV === "production") {
+  app.use("/*", serveStatic({ root: "./dist/public" }));
+  // SPA fallback — serve index.html for all non-API, non-static routes
+  app.get("*", serveStatic({ root: "./dist/public", path: "index.html" }));
 }
 
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
+// Start server
+const port = parseInt(process.env.PORT || "5000");
+console.log(`[ASOV] Starting server on port ${port}...`);
+console.log(`[ASOV] Environment: ${process.env.NODE_ENV || "development"}`);
+console.log(`[ASOV] Database: ${process.env.DATABASE_URL ? "Supabase Postgres" : "NOT SET"}`);
+console.log(`[ASOV] Cache: ${process.env.UPSTASH_REDIS_REST_URL ? "Upstash Redis" : "NOT SET"}`);
 
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
+serve({ fetch: app.fetch, port }, (info) => {
+  console.log(`[ASOV] Server running at http://localhost:${info.port}`);
 });
 
-(async () => {
-  await registerRoutes(httpServer, app);
-
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Internal Server Error:", err);
-
-    if (res.headersSent) {
-      return next(err);
-    }
-
-    return res.status(status).json({ message });
-  });
-
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
-  }
-
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
-})();
+export default app;
