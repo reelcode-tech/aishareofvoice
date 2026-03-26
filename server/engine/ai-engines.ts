@@ -4,7 +4,7 @@
 // Monitor: + Claude (3 engines)
 // Agency: + Grok + Perplexity (5 engines)
 
-import { getCached, setCached } from "./cache";
+import { getForMode, setForMode } from "./cache";
 import { recordFailure, recordSuccess, shouldSkipProvider } from "./circuit-breaker";
 import { recordSpend } from "./spend-tracker";
 import { logger } from "./logger";
@@ -342,8 +342,17 @@ async function callGemini(
 
 // ── Engine query functions (async cache + direct API) ───────────────
 
+// Mode and locale are set per-run by queryEnginesBatch — default to live/en
+let _currentMode: "live" | "benchmark" = "live";
+let _currentLocale: string = "en";
+
+export function setRunContext(mode: "live" | "benchmark", locale: string) {
+  _currentMode = mode;
+  _currentLocale = locale;
+}
+
 async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getCached("gemini", query, tier);
+  const cached = await getForMode(_currentMode, "gemini", query, tier || "snapshot", "gemini-2.0-flash", _currentLocale);
   if (cached) { logger.cache("hit", { engine: "gemini", tier }); return { response: cached }; }
   
   // Circuit breaker check
@@ -356,7 +365,7 @@ async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: st
   const start = Date.now();
   try {
     const text = await callGemini(apiKey, "gemini-2.0-flash", query, systemPrompt, PROVIDER_TIMEOUTS.gemini);
-    await setCached("gemini", query, text, tier);
+    await setForMode(_currentMode, "gemini", query, text, tier || "snapshot", "gemini-2.0-flash", _currentLocale);
     await recordSuccess("gemini");
     await recordSpend("gemini");
     logger.provider("success", { provider: "gemini", model: "gemini-2.0-flash", durationMs: Date.now() - start });
@@ -369,7 +378,7 @@ async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: st
 }
 
 async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getCached("chatgpt", query, tier);
+  const cached = await getForMode(_currentMode, "chatgpt", query, tier || "snapshot", "gpt-4o-mini", _currentLocale);
   if (cached) { logger.cache("hit", { engine: "chatgpt", tier }); return { response: cached }; }
   
   const skip = await shouldSkipProvider("chatgpt");
@@ -383,7 +392,7 @@ async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: s
     const text = await callOpenAICompatible(
       "https://api.openai.com/v1", apiKey, "gpt-4o-mini", query, systemPrompt, PROVIDER_TIMEOUTS.openai
     );
-    await setCached("chatgpt", query, text, tier);
+    await setForMode(_currentMode, "chatgpt", query, text, tier || "snapshot", "gpt-4o-mini", _currentLocale);
     await recordSuccess("chatgpt");
     await recordSpend("chatgpt");
     logger.provider("success", { provider: "chatgpt", model: "gpt-4o-mini", durationMs: Date.now() - start });
@@ -396,7 +405,7 @@ async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: s
 }
 
 async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getCached("claude", query, tier);
+  const cached = await getForMode(_currentMode, "claude", query, tier || "snapshot", "claude-3-haiku-20240307", _currentLocale);
   if (cached) { logger.cache("hit", { engine: "claude", tier }); return { response: cached }; }
   
   const skip = await shouldSkipProvider("claude");
@@ -408,10 +417,10 @@ async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: st
   const start = Date.now();
   try {
     const text = await callAnthropic(apiKey, "claude-3-haiku-20240307", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
-    await setCached("claude", query, text, tier);
+    await setForMode(_currentMode, "claude", query, text, tier || "snapshot", "claude-3-haiku-20240307", _currentLocale);
     await recordSuccess("claude");
     await recordSpend("claude");
-    logger.provider("success", { provider: "claude", model: "claude-3-5-haiku", durationMs: Date.now() - start });
+    logger.provider("success", { provider: "claude", model: "claude-3-haiku-20240307", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
     await recordFailure("claude");
@@ -421,7 +430,7 @@ async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: st
 }
 
 async function queryGrokEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getCached("grok", query, tier);
+  const cached = await getForMode(_currentMode, "grok", query, tier || "snapshot", "grok-3-mini-fast", _currentLocale);
   if (cached) { logger.cache("hit", { engine: "grok", tier }); return { response: cached }; }
   
   const skip = await shouldSkipProvider("grok");
@@ -435,7 +444,7 @@ async function queryGrokEngine(query: string, systemPrompt?: string, tier?: stri
     const text = await callOpenAICompatible(
       "https://api.x.ai/v1", apiKey, "grok-3-mini-fast", query, systemPrompt, PROVIDER_TIMEOUTS.grok
     );
-    await setCached("grok", query, text, tier);
+    await setForMode(_currentMode, "grok", query, text, tier || "snapshot", "grok-3-mini-fast", _currentLocale);
     await recordSuccess("grok");
     await recordSpend("grok");
     logger.provider("success", { provider: "grok", model: "grok-3-mini-fast", durationMs: Date.now() - start });
@@ -448,7 +457,7 @@ async function queryGrokEngine(query: string, systemPrompt?: string, tier?: stri
 }
 
 async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getCached("perplexity", query, tier);
+  const cached = await getForMode(_currentMode, "perplexity", query, tier || "snapshot", "sonar", _currentLocale);
   if (cached) { logger.cache("hit", { engine: "perplexity", tier }); return { response: cached }; }
   
   const skip = await shouldSkipProvider("perplexity");
@@ -462,7 +471,7 @@ async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?
     const text = await callOpenAICompatible(
       "https://api.perplexity.ai", apiKey, "sonar", query, systemPrompt, PROVIDER_TIMEOUTS.perplexity
     );
-    await setCached("perplexity", query, text, tier);
+    await setForMode(_currentMode, "perplexity", query, text, tier || "snapshot", "sonar", _currentLocale);
     await recordSuccess("perplexity");
     await recordSpend("perplexity");
     logger.provider("success", { provider: "perplexity", model: "sonar", durationMs: Date.now() - start });
@@ -524,8 +533,12 @@ export async function queryEnginesBatch(
   queries: { query: string; intent: string }[],
   targetBrand: string,
   category: string = "general",
-  tier: string = "snapshot"
+  tier: string = "snapshot",
+  mode: "live" | "benchmark" = "live",
+  locale: string = "en",
 ): Promise<EngineResult[]> {
+  // Gap 1: Set run context for cache behavior
+  setRunContext(mode, locale);
   const systemPrompt = getBrandExtractionSystemPrompt(category);
   
   const tasks = engines.flatMap(engine =>

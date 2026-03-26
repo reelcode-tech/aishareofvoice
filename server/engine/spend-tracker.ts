@@ -19,13 +19,18 @@ function getRedis(): Redis | null {
 }
 
 // Estimated cost per provider call (in cents, not dollars)
-// These are approximate — based on ~1024 output tokens per call
+// Updated with real cost data from API responses:
+// - Grok: ~$0.013 per call (1,328,250 usd_ticks = ~1.3¢, includes reasoning tokens)
+// - Perplexity: ~$0.50 per call ($0.005 request_cost base — EXPENSIVE for small budgets)
+// - Claude: ~$0.03 per call (haiku is cheap)
+// - ChatGPT: ~$0.06 per call (gpt-4o-mini)
+// - Gemini: ~$0.02 per call (flash is cheapest)
 const PROVIDER_COST_CENTS: Record<string, number> = {
   chatgpt: 0.06,     // gpt-4o-mini: ~$0.15/1M input + $0.60/1M output
-  gemini: 0.02,      // gemini-2.0-flash: ~$0.075/1M input + $0.30/1M output
-  claude: 0.10,      // claude-3-5-haiku: ~$0.25/1M input + $1.25/1M output
-  grok: 0.05,        // grok-3-mini-fast: estimate
-  perplexity: 0.10,  // sonar: ~$1/1000 requests
+  gemini: 0.02,      // gemini-2.0-flash: cheapest provider
+  claude: 0.03,      // claude-3-haiku: $0.25/1M input + $1.25/1M output
+  grok: 1.50,        // grok-3-mini-fast: ~$0.013/call BUT reasoning tokens are expensive
+  perplexity: 0.50,  // sonar: $0.005/request base cost — most expensive per-call
 };
 
 // Per-tier estimated total cost (all queries × all engines)
@@ -38,8 +43,15 @@ const TIER_WEIGHT: Record<string, number> = {
   agency: 5,
 };
 
-// Daily hard ceiling in cents ($50 default = 5000 cents)
-const DAILY_CEILING_CENTS = 5000;
+// Daily hard ceiling in cents
+// With $5 on Grok + $5 on Perplexity, we need to be very conservative.
+// $5 Perplexity ≈ 1000 calls ($0.005/call), $5 Grok ≈ 375 calls (~$0.013/call)
+// A snapshot audit = 12 queries × 2 engines = 24 calls
+// A monitor audit = 25 queries × 3 engines = 75 calls  
+// An agency audit = 30 queries × 5 engines = 150 calls (30 Grok + 30 Perplexity = ~$0.54)
+// Budget: ~9 agency audits before hitting Grok limit, ~18 before Perplexity limit
+// Set daily ceiling to $2/day = 200 cents (preserves budget over multiple days of testing)
+const DAILY_CEILING_CENTS = 200;
 
 // Get today's date key in UTC (e.g., "2026-03-25")
 function todayKey(): string {
@@ -111,8 +123,8 @@ export async function checkSpendBudget(
       return { allowed: true, currentSpendCents: current, ceilingCents: DAILY_CEILING_CENTS };
     }
     
-    // At 80% ceiling: block snapshot
-    if (current >= DAILY_CEILING_CENTS * 0.8 && tier === "snapshot") {
+    // At 60% ceiling: block snapshot (free tier gets cut first)
+    if (current >= DAILY_CEILING_CENTS * 0.6 && tier === "snapshot") {
       return {
         allowed: false,
         currentSpendCents: current,
@@ -121,8 +133,8 @@ export async function checkSpendBudget(
       };
     }
     
-    // At 100% ceiling: block snapshot + monitor
-    if (current >= DAILY_CEILING_CENTS) {
+    // At 85% ceiling: block snapshot + monitor
+    if (current >= DAILY_CEILING_CENTS * 0.85) {
       if (tier === "monitor") {
         return {
           allowed: false,
@@ -131,6 +143,18 @@ export async function checkSpendBudget(
           reason: "Daily API budget reached. Monitor audits temporarily queued. Try again later.",
         };
       }
+      if (tier === "snapshot") {
+        return {
+          allowed: false,
+          currentSpendCents: current,
+          ceilingCents: DAILY_CEILING_CENTS,
+          reason: "Daily API budget exhausted. Try again tomorrow.",
+        };
+      }
+    }
+    
+    // At 100% ceiling: block everything except agency
+    if (current >= DAILY_CEILING_CENTS && tier !== "agency") {
       return {
         allowed: false,
         currentSpendCents: current,

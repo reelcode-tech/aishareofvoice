@@ -35,7 +35,7 @@ app.use("*", cors({
 app.get("/api/health", (c) => c.json({ 
   status: "ok", 
   timestamp: new Date().toISOString(),
-  version: "2.1.0",
+  version: "2.2.0",
   runtime: "cloudflare-workers",
   features: [
     "idempotency",
@@ -44,6 +44,15 @@ app.get("/api/health", (c) => c.json({
     "abuse-controls",
     "structured-logging",
     "auto-migration",
+    "live-vs-benchmark",
+    "async-jobs",
+    "concurrency-control",
+    "version-metadata",
+    "query-dedup",
+    "gdpr-deletion",
+    "multi-tenancy",
+    "scheduler",
+    "result-caching",
   ],
 }));
 
@@ -101,6 +110,10 @@ app.get("/api/migrate", async (c) => {
         geo_audit JSONB,
         recommendations JSONB,
         custom_competitors JSONB,
+        raw_responses JSONB,
+        version_metadata JSONB,
+        audit_metadata JSONB,
+        mode TEXT NOT NULL DEFAULT 'live',
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
     `);
@@ -108,6 +121,17 @@ app.get("/api/migrate", async (c) => {
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_audits_brand ON audits(brand_name);`);
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_audits_created ON audits(created_at DESC);`);
     await db.execute(`CREATE INDEX IF NOT EXISTS idx_audits_brand_created ON audits(brand_name, created_at DESC);`);
+    
+    // Gap 1/7/16/21/22: Add new columns to existing tables (safe: IF NOT EXISTS / DO NOTHING)
+    const alterStatements = [
+      `ALTER TABLE audits ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'live'`,
+      `ALTER TABLE audits ADD COLUMN IF NOT EXISTS raw_responses JSONB`,
+      `ALTER TABLE audits ADD COLUMN IF NOT EXISTS version_metadata JSONB`,
+      `ALTER TABLE audits ADD COLUMN IF NOT EXISTS audit_metadata JSONB`,
+    ];
+    for (const stmt of alterStatements) {
+      try { await db.execute(stmt); } catch { /* column may already exist */ }
+    }
     
     return c.json({ 
       status: "ok", 
