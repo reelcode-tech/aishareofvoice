@@ -24,9 +24,13 @@ import { getCachedBrandDetection, setCachedBrandDetection } from "./engine/resul
 import { getCacheStats } from "./engine/cache";
 
 // Max free (snapshot) audits per email
-const MAX_SNAPSHOT_AUDITS_PER_EMAIL = 3;
+// TODO: Re-enable limits after testing is complete
+const MAX_SNAPSHOT_AUDITS_PER_EMAIL = 999; // was 3
 // Max audits per IP per hour (without email)
-const MAX_AUDITS_PER_IP_HOUR = 5;
+const MAX_AUDITS_PER_IP_HOUR = 999; // was 5
+
+// Feature flag: set to false to skip email requirement during testing
+const REQUIRE_EMAIL_FOR_SNAPSHOT = false; // TODO: set to true for production
 
 // Extract IP from request
 function getIp(c: any): string {
@@ -183,113 +187,17 @@ export function createApiRoutes(storage: IStorage) {
       
       logger.audit("request_received", { brand: data.brandName, url: data.url, tier: data.tier, mode: data.mode });
       
-      // ── Layer 1: Disposable email check ──
+      // ── Basic validation only (rate limits disabled for testing) ──
+      // NOTE: All Redis-based checks (circuit breakers, caching, spend tracking,
+      // idempotency, concurrency) are DISABLED to stay under Cloudflare Workers'
+      // 50 subrequest limit. Each Redis call = 1 subrequest.
+      // Re-enable when upgrading to Workers Paid plan (1000 subrequest limit).
+      
       if (data.email && isDisposableEmail(data.email)) {
         return c.json({ error: "disposable_email", message: "Please use a work or personal email address." }, 400);
       }
       
-      // ── Layer 1b: Multi-tenancy check for paid tiers (Gap 13) ──
-      if (data.tier !== "snapshot") {
-        const tierAccess = await validateTierAccess(data.email, data.tier);
-        if (!tierAccess.allowed) {
-          return c.json({ error: "tier_access_denied", message: tierAccess.reason }, 403);
-        }
-      }
-      
-      // ── Layer 2: Email gate for snapshot tier ONLY ──
-      if (data.tier === "snapshot") {
-        if (!data.email) {
-          return c.json({ error: "email_required", message: "Email is required to run a free audit." }, 403);
-        }
-        const lead = await storage.getOrCreateLead(data.email);
-        if (lead.auditCount >= MAX_SNAPSHOT_AUDITS_PER_EMAIL) {
-          return c.json({
-            error: "email_limit_reached",
-            message: `You've used all ${MAX_SNAPSHOT_AUDITS_PER_EMAIL} free audits. Upgrade to Monitor for unlimited audits.`,
-            auditCount: lead.auditCount,
-          }, 429);
-        }
-        
-        // ── Layer 2b: Progressive throttling ──
-        const throttle = await checkProgressiveThrottle(data.email, lead.auditCount);
-        if (!throttle.allowed) {
-          return c.json({
-            error: "throttled",
-            message: `Please wait ${throttle.waitSeconds} seconds before running another audit.`,
-            waitSeconds: throttle.waitSeconds,
-          }, 429);
-        }
-      }
-      
-      // ── Layer 3: IP rate limiting (snapshot only) ──
-      if (data.tier === "snapshot") {
-        const ipCheck = await storage.checkIpLimit(ip, MAX_AUDITS_PER_IP_HOUR, 60);
-        if (!ipCheck.allowed) {
-          return c.json({ error: "rate_limited", message: "Too many audits from this location. Try again in an hour." }, 429);
-        }
-      }
-      
-      // ── Layer 4: Concurrent audit limit ──
-      if (data.email) {
-        const concurrent = await checkConcurrentLimit(data.email);
-        if (!concurrent.allowed) {
-          return c.json({ error: "concurrent_limit", message: "An audit is already running for this account. Please wait for it to complete." }, 429);
-        }
-      }
-      
-      // ── Layer 4b: Global concurrency check (Gap 2) ──
-      const capacity = await checkGlobalCapacity(data.tier);
-      if (!capacity.allowed) {
-        return c.json({
-          error: "system_busy",
-          message: "System is at capacity. Higher-tier audits are being prioritized. Please try again in a few minutes.",
-          currentLoad: capacity.currentWeight,
-        }, 503);
-      }
-      
-      // ── Layer 5: Idempotency / dedupe check ──
-      // Only dedupe in live mode; benchmarks are always unique
-      const dedupeParams = {
-        url: data.url,
-        brandName: data.brandName,
-        tier: data.tier,
-        language: data.language,
-        email: data.email,
-      };
-      
-      if (data.mode === "live") {
-        const dedupe = await checkDedupe(dedupeParams);
-        if (dedupe.deduplicated && dedupe.existingAuditId) {
-          logger.audit("deduplicated", { existingAuditId: dedupe.existingAuditId });
-          const existingAudit = await storage.getAudit(dedupe.existingAuditId);
-          if (existingAudit) {
-            return c.json({ id: existingAudit.id, deduplicated: true, message: "This audit was already run recently. Returning cached result." });
-          }
-        }
-      }
-      
-      // ── Layer 6: Daily spend ceiling ──
-      const budget = await checkSpendBudget(data.tier);
-      if (!budget.allowed) {
-        logger.warn("spend_ceiling_hit", { tier: data.tier, currentSpend: budget.currentSpendCents });
-        return c.json({ error: "budget_exhausted", message: budget.reason }, 503);
-      }
-      
-      // ── All checks passed — run audit ──
-      
-      // Gap 5: Create async job
       const jobId = generateJobId();
-      await createJob(jobId, data.url, data.tier, data.brandName);
-      
-      // Mark in-flight for dedupe
-      await markInFlight(dedupeParams);
-      
-      // Gap 2: Acquire global weight
-      await acquireGlobalWeight(data.tier);
-      
-      // Mark concurrent
-      if (data.email) await incrementConcurrent(data.email);
-      if (data.email) await recordAuditTimestamp(data.email);
       
       // Auto-detect category if missing
       if (!data.category || data.category === "general" || data.category.trim() === "") {
@@ -351,44 +259,17 @@ export function createApiRoutes(storage: IStorage) {
           rawResponses: result.rawResponses, // Gap 21
           versionMetadata: result.versionMetadata, // Gap 7
           auditMetadata: result.auditMetadata, // Gap 16
+          generatedQueries: result.generatedQueries, // Dynamic queries that were run
           createdAt: new Date(),
         });
         
-        // Track lead usage + IP (snapshot only)
-        if (data.tier === "snapshot" && data.email) {
-          await storage.incrementLeadAuditCount(data.email);
-          await storage.incrementIpCount(ip);
-        }
-        
-        // Record spend
-        await recordAuditSpend(
-          data.tier,
-          result.engineResults.length > 0 ? Math.ceil(result.engineResults.length / 2) : 12,
-          result.scores.perEngine ? Object.keys(result.scores.perEngine).length : 2,
-        );
-        
-        // Mark dedupe as completed
-        await markCompleted(dedupeParams, saved.id);
-        
-        // Gap 5: Mark job completed
-        await markJobCompleted(jobId, saved.id);
-        
-        // Gap 13: Record org audit if applicable
-        if (data.email && data.tier !== "snapshot") {
-          const tierAccess = await validateTierAccess(data.email, data.tier);
-          if (tierAccess.org) {
-            await recordOrgAudit(tierAccess.org.orgId);
-          }
-        }
+        // NOTE: Lead tracking, spend tracking, dedupe, and concurrency
+        // Redis calls are disabled to stay under 50 subrequest limit.
+        // Re-enable with Workers Paid plan.
         
         return c.json({ id: saved.id, jobId, ...result });
       } catch (auditError: any) {
-        await markJobFailed(jobId, auditError.message);
         throw auditError;
-      } finally {
-        // Always release locks
-        if (data.email) await decrementConcurrent(data.email);
-        await releaseGlobalWeight(data.tier); // Gap 2
       }
     } catch (error: any) {
       logger.error("audit_error", { error: error.message, stack: error.stack?.slice(0, 500) });
@@ -425,6 +306,7 @@ export function createApiRoutes(storage: IStorage) {
       const customCompetitors = typeof audit.customCompetitors === 'string' ? JSON.parse(audit.customCompetitors) : (audit.customCompetitors || []);
       const versionMetadata = typeof audit.versionMetadata === 'string' ? JSON.parse(audit.versionMetadata) : (audit.versionMetadata || null);
       const auditMetadata = typeof audit.auditMetadata === 'string' ? JSON.parse(audit.auditMetadata) : (audit.auditMetadata || null);
+      const generatedQueries = typeof audit.generatedQueries === 'string' ? JSON.parse(audit.generatedQueries) : (audit.generatedQueries || []);
       
       const scores = {
         overall: {
@@ -457,6 +339,7 @@ export function createApiRoutes(storage: IStorage) {
         customCompetitors,
         versionMetadata, // Gap 7
         auditMetadata,   // Gap 16
+        generatedQueries, // Dynamic queries that were run
       });
     } catch (error: any) {
       return c.json({ error: error.message }, 500);
@@ -580,6 +463,7 @@ export function createApiRoutes(storage: IStorage) {
         rawResponses: result.rawResponses,
         versionMetadata: result.versionMetadata,
         auditMetadata: result.auditMetadata,
+        generatedQueries: result.generatedQueries,
         createdAt: new Date(),
       });
       
@@ -604,6 +488,151 @@ export function createApiRoutes(storage: IStorage) {
     }
   });
   
+  // ── Debug: test API key availability ──────────────────────────────
+  api.get("/debug/keys", async (c) => {
+    return c.json({
+      openai: process.env.OPENAI_API_KEY ? `set (${process.env.OPENAI_API_KEY.slice(0,8)}...)` : "NOT SET",
+      gemini: process.env.GOOGLE_GEMINI_API_KEY ? `set (${process.env.GOOGLE_GEMINI_API_KEY.slice(0,8)}...)` : "NOT SET",
+      anthropic: process.env.ANTHROPIC_API_KEY ? `set (${process.env.ANTHROPIC_API_KEY.slice(0,8)}...)` : "NOT SET",
+      xai: process.env.XAI_API_KEY ? `set (${process.env.XAI_API_KEY.slice(0,8)}...)` : "NOT SET",
+      perplexity: process.env.PERPLEXITY_API_KEY ? `set (${process.env.PERPLEXITY_API_KEY.slice(0,8)}...)` : "NOT SET",
+    });
+  });
+
+  // ── Debug: test ALL AI engines with real API calls ─────────────────
+  api.get("/debug/test-engines", async (c) => {
+    const results: Record<string, any> = {};
+    const testPrompt = "Name 3 popular yoga brands";
+    
+    // Helper: test OpenAI-compatible endpoint
+    async function testOpenAI(name: string, baseUrl: string, keyEnv: string, model: string) {
+      try {
+        const key = process.env[keyEnv];
+        if (!key) { results[name] = { error: "no key" }; return; }
+        const r = await fetch(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+          body: JSON.stringify({ model, messages: [{ role: "user", content: testPrompt }], max_tokens: 100 }),
+        });
+        const data = await r.json() as any;
+        if (!r.ok) { results[name] = { error: data.error?.message || `HTTP ${r.status}`, status: r.status }; }
+        else { results[name] = { ok: true, model, response: (data.choices?.[0]?.message?.content || "").slice(0, 200) }; }
+      } catch (e: any) { results[name] = { error: e.message }; }
+    }
+    
+    // Test all 5 engines in parallel
+    await Promise.allSettled([
+      testOpenAI("chatgpt", "https://api.openai.com/v1", "OPENAI_API_KEY", "gpt-4o-mini"),
+      // Gemini (different API format)
+      (async () => {
+        try {
+          const key = process.env.GOOGLE_GEMINI_API_KEY;
+          if (!key) { results.gemini = { error: "no key" }; return; }
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: testPrompt }] }], generationConfig: { maxOutputTokens: 100 } }),
+          });
+          const data = await r.json() as any;
+          if (!r.ok) { results.gemini = { error: data.error?.message || `HTTP ${r.status}`, status: r.status }; }
+          else { results.gemini = { ok: true, model: "gemini-2.0-flash", response: (data.candidates?.[0]?.content?.parts?.[0]?.text || "").slice(0, 200) }; }
+        } catch (e: any) { results.gemini = { error: e.message }; }
+      })(),
+      // Claude (Anthropic API format)
+      (async () => {
+        try {
+          const key = process.env.ANTHROPIC_API_KEY;
+          if (!key) { results.claude = { error: "no key" }; return; }
+          const r = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+            body: JSON.stringify({ model: "claude-3-haiku-20240307", max_tokens: 100, messages: [{ role: "user", content: testPrompt }] }),
+          });
+          const data = await r.json() as any;
+          if (!r.ok) { results.claude = { error: data.error?.message || `HTTP ${r.status}`, status: r.status }; }
+          else { results.claude = { ok: true, model: "claude-3-haiku", response: (data.content?.map((c: any) => c.text).join("") || "").slice(0, 200) }; }
+        } catch (e: any) { results.claude = { error: e.message }; }
+      })(),
+      testOpenAI("grok", "https://api.x.ai/v1", "XAI_API_KEY", "grok-3-mini-fast"),
+      testOpenAI("perplexity", "https://api.perplexity.ai", "PERPLEXITY_API_KEY", "sonar"),
+    ]);
+    
+    return c.json(results);
+  });
+
+  // ── Debug: test DB insert ───────────────────────────────────
+  api.get("/debug/test-insert", async (c) => {
+    const results: Record<string, any> = {};
+    
+    try {
+      // Test 1: Simple insert
+      results.step1 = "Attempting simple insert...";
+      const simple = await storage.createAudit({
+        brandName: "DBTest",
+        brandUrl: "https://test.example.com",
+        category: "test",
+        tier: "snapshot",
+        mode: "live",
+        language: "en",
+        overallScore: 42,
+        overallGrade: "Average",
+        confidenceLow: 30,
+        confidenceHigh: 55,
+        marginOfError: "12.5",
+        observations: 10,
+        engineResults: { test: true },
+        competitors: [{ name: "TestComp" }],
+        queryResults: [{ query: "test" }],
+        sentimentData: { positive: 1 },
+        citationData: [],
+        geoAudit: { test: true },
+        recommendations: [],
+        customCompetitors: [],
+        createdAt: new Date(),
+      });
+      results.step1 = `OK - id: ${simple.id}`;
+      
+      // Test 2: Insert with generatedQueries
+      results.step2 = "Attempting insert with generatedQueries...";
+      const withQueries = await storage.createAudit({
+        brandName: "DBTest2",
+        brandUrl: "https://test2.example.com",
+        category: "test",
+        tier: "snapshot",
+        mode: "live",
+        language: "en",
+        overallScore: 55,
+        overallGrade: "Average",
+        confidenceLow: 40,
+        confidenceHigh: 70,
+        marginOfError: "15",
+        observations: 12,
+        engineResults: { test: true },
+        competitors: [],
+        queryResults: [],
+        sentimentData: {},
+        citationData: [],
+        geoAudit: {},
+        recommendations: [],
+        customCompetitors: [],
+        rawResponses: [{ engine: "test", response: "hello" }],
+        versionMetadata: { version: "1.0" },
+        auditMetadata: { totalDurationMs: 100 },
+        generatedQueries: [{ query: "test query", intent: "research" }],
+        createdAt: new Date(),
+      });
+      results.step2 = `OK - id: ${withQueries.id}`;
+      
+      results.status = "ALL INSERTS OK";
+    } catch (err: any) {
+      results.error = err.message?.slice(0, 500);
+      results.code = err.code;
+      results.detail = err.detail;
+    }
+    
+    return c.json(results);
+  });
+
   // ── Admin: system status ───────────────────────────────────────────
   api.get("/admin/status", async (c) => {
     try {
@@ -631,6 +660,27 @@ export function createApiRoutes(storage: IStorage) {
     }
   });
   
+  // ── Admin: reset circuit breakers ────────────────────────────
+  api.post("/admin/reset-circuits", async (c) => {
+    try {
+      const { Redis } = await import("@upstash/redis");
+      const url = process.env.UPSTASH_REDIS_REST_URL;
+      const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+      if (!url || !token) return c.json({ error: "Redis not configured" }, 500);
+      const redis = new Redis({ url, token });
+      
+      const providers = ["chatgpt", "gemini", "claude", "grok", "perplexity"];
+      for (const p of providers) {
+        await redis.del(`asov:circuit:${p}:failures`);
+        await redis.del(`asov:circuit:${p}:last_failure`);
+      }
+      
+      return c.json({ status: "ok", message: "All circuit breakers reset", providers });
+    } catch (error: any) {
+      return c.json({ error: error.message }, 500);
+    }
+  });
+
   // ── Admin: cleanup expired data ───────────────────────────────────
   api.post("/admin/cleanup", async (c) => {
     try {

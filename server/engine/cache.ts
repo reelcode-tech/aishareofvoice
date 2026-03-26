@@ -82,6 +82,7 @@ export async function setCached(
   model: string = "",
   locale: string = "en",
 ): Promise<void> {
+  if (!response || response.trim().length < 10) return; // Don't cache empty/trivial responses
   try {
     const redis = getRedis();
     if (!redis) return;

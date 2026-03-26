@@ -128,6 +128,7 @@ app.get("/api/migrate", async (c) => {
       `ALTER TABLE audits ADD COLUMN IF NOT EXISTS raw_responses JSONB`,
       `ALTER TABLE audits ADD COLUMN IF NOT EXISTS version_metadata JSONB`,
       `ALTER TABLE audits ADD COLUMN IF NOT EXISTS audit_metadata JSONB`,
+      `ALTER TABLE audits ADD COLUMN IF NOT EXISTS generated_queries JSONB`,
     ];
     for (const stmt of alterStatements) {
       try { await db.execute(stmt); } catch { /* column may already exist */ }

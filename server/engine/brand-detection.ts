@@ -42,6 +42,29 @@ const KNOWN_DOMAIN_BRANDS: Record<string, { brand: string; category: string }> =
   "monday.com": { brand: "Monday.com", category: "project management" },
   "slack.com": { brand: "Slack", category: "communication" },
   "notion.so": { brand: "Notion", category: "productivity" },
+  "lululemon.com": { brand: "Lululemon", category: "athletic apparel" },
+  "lululemon.ca": { brand: "Lululemon", category: "athletic apparel" },
+  "allbirds.com": { brand: "Allbirds", category: "sustainable footwear" },
+  "warbyparker.com": { brand: "Warby Parker", category: "eyewear" },
+  "peloton.com": { brand: "Peloton", category: "fitness equipment" },
+  "away.com": { brand: "Away", category: "luggage" },
+  "brooklinen.com": { brand: "Brooklinen", category: "bedding" },
+  "everlane.com": { brand: "Everlane", category: "fashion" },
+  "bombas.com": { brand: "Bombas", category: "socks and apparel" },
+  "hims.com": { brand: "Hims", category: "men's health" },
+  "hers.com": { brand: "Hers", category: "women's health" },
+  "canva.com": { brand: "Canva", category: "design software" },
+  "figma.com": { brand: "Figma", category: "design software" },
+  "linear.app": { brand: "Linear", category: "project management" },
+  "asana.com": { brand: "Asana", category: "project management" },
+  "airtable.com": { brand: "Airtable", category: "database software" },
+  "shopify.com": { brand: "Shopify", category: "ecommerce platform" },
+  "stripe.com": { brand: "Stripe", category: "payment processing" },
+  "intercom.com": { brand: "Intercom", category: "customer messaging" },
+  "zendesk.com": { brand: "Zendesk", category: "customer support" },
+  "mailchimp.com": { brand: "Mailchimp", category: "email marketing" },
+  "semrush.com": { brand: "Semrush", category: "SEO software" },
+  "ahrefs.com": { brand: "Ahrefs", category: "SEO software" },
 };
 
 // Brand alias resolution for truncated names from AI responses
@@ -178,9 +201,6 @@ export interface CategoryDetectionResult {
 }
 
 export async function detectCategoryWithAI(url: string, brandName: string): Promise<CategoryDetectionResult> {
-  const OpenAI = (await import("openai")).default;
-  const client = new OpenAI();
-  
   try {
     // Try to fetch homepage for context
     let siteContext = "";
@@ -207,6 +227,7 @@ export async function detectCategoryWithAI(url: string, brandName: string): Prom
       // Site may be bot-protected, that's fine
     }
     
+    const systemMsg = "You are a brand analyst. Respond with JSON only, no markdown.";
     const prompt = `What business category does the brand "${brandName}" belong to?
 
 URL: ${url}
@@ -224,18 +245,77 @@ Confidence guide:
 
 Category must be a short, specific label like: skincare, mattresses, CRM software, jewelry, fashion, consulting, AI writing tools, ecommerce platform, project management, etc.`;
 
-    const response = await client.responses.create({
-      model: "gpt5_nano",
-      input: prompt,
-    });
-    
-    const text = (typeof response.output === 'string' 
-      ? response.output 
-      : response.output_text || "").trim();
+    // Multi-provider: Claude → OpenAI → Gemini
+    let text = "";
+
+    // 1. Try Claude
+    const anthropicKey = process.env.ANTHROPIC_API_KEY;
+    if (anthropicKey && !text) {
+      try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({
+            model: "claude-3-haiku-20240307", max_tokens: 128,
+            system: systemMsg,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        if (r.ok) {
+          const data = await r.json() as any;
+          text = (data.content?.map((c: any) => c.type === "text" ? c.text : "").join("") || "").trim();
+        }
+      } catch { /* next provider */ }
+    }
+
+    // 2. Try OpenAI
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (openaiKey && !text) {
+      try {
+        const r = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiKey}` },
+          body: JSON.stringify({
+            model: "gpt-4o-mini",
+            messages: [{ role: "system", content: systemMsg }, { role: "user", content: prompt }],
+            max_tokens: 128, temperature: 0.2,
+          }),
+        });
+        if (r.ok) {
+          const data = await r.json() as any;
+          text = (data.choices?.[0]?.message?.content || "").trim();
+        }
+      } catch { /* next provider */ }
+    }
+
+    // 3. Try Gemini
+    const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
+    if (geminiKey && !text) {
+      try {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemMsg }] },
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 128 },
+          }),
+        });
+        if (r.ok) {
+          const data = await r.json() as any;
+          text = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+        }
+      } catch { /* no more providers */ }
+    }
+
+    if (!text) {
+      return { category: "general", confidence: "low", reason: "All AI providers failed", source: "ai_inferred" };
+    }
     
     // Try to parse as JSON
     try {
-      const parsed = JSON.parse(text);
+      const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+      const parsed = JSON.parse(cleaned);
       const cat = (parsed.category || "").toLowerCase().replace(/^["']+|["']+$/g, "").replace(/\.\s*$/, "").trim();
       const conf = ["high", "medium", "low"].includes(parsed.confidence) ? parsed.confidence : "medium";
       const reason = (parsed.reason || "").trim();

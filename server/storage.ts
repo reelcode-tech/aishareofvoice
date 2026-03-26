@@ -52,8 +52,62 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAudit(audit: InsertAudit): Promise<Audit> {
-    const [result] = await this.db.insert(audits).values(audit).returning();
-    return result;
+    try {
+      const [result] = await this.db.insert(audits).values(audit).returning();
+      return result;
+    } catch (error: any) {
+      // Log the actual Postgres error details
+      console.error("[Storage] Insert error code:", error.code, "severity:", error.severity, "detail:", error.detail);
+      console.error("[Storage] Insert error message (first 300):", error.message?.slice(0, 300));
+      
+      // Fallback: try raw SQL insert with only the core fields
+      console.log("[Storage] Attempting raw SQL fallback insert...");
+      try {
+        const freshDb = createDb();
+        const db = drizzle(freshDb as any);
+        // Strip the optional JSONB fields and try again
+        const { generatedQueries, rawResponses, versionMetadata, auditMetadata, ...essential } = audit as any;
+        const [result] = await db.insert(audits).values(essential).returning();
+        console.log("[Storage] Fallback insert succeeded, id:", result?.id);
+        return result;
+      } catch (fallbackError: any) {
+        console.error("[Storage] Fallback error code:", fallbackError.code, "message:", fallbackError.message?.slice(0, 300));
+        
+        // Last resort: try raw SQL with minimal fields
+        try {
+          console.log("[Storage] Attempting raw SQL minimal insert...");
+          const rawClient = postgres(process.env.DATABASE_URL!, { max: 1, prepare: false, idle_timeout: 0, connect_timeout: 10 });
+          const result = await rawClient`
+            INSERT INTO audits (brand_name, brand_url, category, tier, mode, language, overall_score, overall_grade, 
+              confidence_low, confidence_high, margin_of_error, observations,
+              engine_results, competitors, query_results, sentiment_data, citation_data,
+              geo_audit, recommendations, custom_competitors)
+            VALUES (
+              ${audit.brandName}, ${audit.brandUrl}, ${audit.category}, ${audit.tier}, 
+              ${(audit as any).mode || 'live'}, ${audit.language || 'en'}, 
+              ${audit.overallScore ?? null}, ${audit.overallGrade ?? null},
+              ${audit.confidenceLow ?? null}, ${audit.confidenceHigh ?? null}, 
+              ${audit.marginOfError ?? null}, ${audit.observations ?? null},
+              ${JSON.stringify(audit.engineResults) ?? null}::jsonb,
+              ${JSON.stringify(audit.competitors) ?? null}::jsonb,
+              ${JSON.stringify(audit.queryResults) ?? null}::jsonb,
+              ${JSON.stringify(audit.sentimentData) ?? null}::jsonb,
+              ${JSON.stringify(audit.citationData) ?? null}::jsonb,
+              ${JSON.stringify(audit.geoAudit) ?? null}::jsonb,
+              ${JSON.stringify(audit.recommendations) ?? null}::jsonb,
+              ${JSON.stringify(audit.customCompetitors) ?? null}::jsonb
+            )
+            RETURNING *
+          `;
+          await rawClient.end();
+          console.log("[Storage] Raw SQL insert succeeded, id:", result[0]?.id);
+          return result[0] as unknown as Audit;
+        } catch (rawError: any) {
+          console.error("[Storage] Raw SQL insert also failed:", rawError.message?.slice(0, 300));
+          throw rawError;
+        }
+      }
+    }
   }
 
   async getAudit(id: number): Promise<Audit | undefined> {

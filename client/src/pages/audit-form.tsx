@@ -188,7 +188,8 @@ export default function AuditForm() {
   
   const selectedLang = LANGUAGES.find(l => l.code === language);
   const isDetecting = detectAllMutation.isPending;
-  const needsEmail = tier === "snapshot" && !emailSubmitted;
+  // TODO: Re-enable email gate for production
+  const needsEmail = false; // was: tier === "snapshot" && !emailSubmitted;
   const canRunAudit = url && brandName && !isDetecting && !needsEmail;
 
   return (
@@ -352,7 +353,7 @@ export default function AuditForm() {
             )}
 
             {!isDetecting && competitors.length === 0 && detectionComplete && (
-              <p className="text-xs text-muted-foreground mb-2">No competitors auto-detected. Add some manually below.</p>
+              <p className="text-xs text-muted-foreground mb-2">Add your key competitors below — we'll measure how AI recommends them versus you.</p>
             )}
 
             {!isDetecting && (

@@ -219,11 +219,11 @@ Example BAD response (don't do this):
 
 // Per-provider timeout budgets (milliseconds) per v3 spec §3
 const PROVIDER_TIMEOUTS: Record<string, number> = {
-  openai: 10_000,
-  gemini: 12_000,
-  anthropic: 15_000,
-  grok: 12_000,
-  perplexity: 20_000,
+  openai: 25_000,
+  gemini: 25_000,
+  anthropic: 30_000,
+  grok: 25_000,
+  perplexity: 30_000,
 };
 
 // Helper: fetch with timeout using AbortController
@@ -352,38 +352,21 @@ export function setRunContext(mode: "live" | "benchmark", locale: string) {
 }
 
 async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getForMode(_currentMode, "gemini", query, tier || "snapshot", "gemini-2.0-flash", _currentLocale);
-  if (cached) { logger.cache("hit", { engine: "gemini", tier }); return { response: cached }; }
-  
-  // Circuit breaker check
-  const skip = await shouldSkipProvider("gemini");
-  if (skip.skip) { logger.provider("skipped", { provider: "gemini", reason: skip.reason }); return { response: "" }; }
-  
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "gemini" }); return { response: "" }; }
   
   const start = Date.now();
   try {
     const text = await callGemini(apiKey, "gemini-2.0-flash", query, systemPrompt, PROVIDER_TIMEOUTS.gemini);
-    await setForMode(_currentMode, "gemini", query, text, tier || "snapshot", "gemini-2.0-flash", _currentLocale);
-    await recordSuccess("gemini");
-    await recordSpend("gemini");
     logger.provider("success", { provider: "gemini", model: "gemini-2.0-flash", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    await recordFailure("gemini");
     logger.provider("error", { provider: "gemini", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getForMode(_currentMode, "chatgpt", query, tier || "snapshot", "gpt-4o-mini", _currentLocale);
-  if (cached) { logger.cache("hit", { engine: "chatgpt", tier }); return { response: cached }; }
-  
-  const skip = await shouldSkipProvider("chatgpt");
-  if (skip.skip) { logger.provider("skipped", { provider: "chatgpt", reason: skip.reason }); return { response: "" }; }
-  
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "chatgpt" }); return { response: "" }; }
   
@@ -392,50 +375,30 @@ async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: s
     const text = await callOpenAICompatible(
       "https://api.openai.com/v1", apiKey, "gpt-4o-mini", query, systemPrompt, PROVIDER_TIMEOUTS.openai
     );
-    await setForMode(_currentMode, "chatgpt", query, text, tier || "snapshot", "gpt-4o-mini", _currentLocale);
-    await recordSuccess("chatgpt");
-    await recordSpend("chatgpt");
     logger.provider("success", { provider: "chatgpt", model: "gpt-4o-mini", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    await recordFailure("chatgpt");
     logger.provider("error", { provider: "chatgpt", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getForMode(_currentMode, "claude", query, tier || "snapshot", "claude-3-haiku-20240307", _currentLocale);
-  if (cached) { logger.cache("hit", { engine: "claude", tier }); return { response: cached }; }
-  
-  const skip = await shouldSkipProvider("claude");
-  if (skip.skip) { logger.provider("skipped", { provider: "claude", reason: skip.reason }); return { response: "" }; }
-  
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "claude" }); return { response: "" }; }
   
   const start = Date.now();
   try {
     const text = await callAnthropic(apiKey, "claude-3-haiku-20240307", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
-    await setForMode(_currentMode, "claude", query, text, tier || "snapshot", "claude-3-haiku-20240307", _currentLocale);
-    await recordSuccess("claude");
-    await recordSpend("claude");
     logger.provider("success", { provider: "claude", model: "claude-3-haiku-20240307", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    await recordFailure("claude");
     logger.provider("error", { provider: "claude", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryGrokEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getForMode(_currentMode, "grok", query, tier || "snapshot", "grok-3-mini-fast", _currentLocale);
-  if (cached) { logger.cache("hit", { engine: "grok", tier }); return { response: cached }; }
-  
-  const skip = await shouldSkipProvider("grok");
-  if (skip.skip) { logger.provider("skipped", { provider: "grok", reason: skip.reason }); return { response: "" }; }
-  
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "grok" }); return { response: "" }; }
   
@@ -444,25 +407,15 @@ async function queryGrokEngine(query: string, systemPrompt?: string, tier?: stri
     const text = await callOpenAICompatible(
       "https://api.x.ai/v1", apiKey, "grok-3-mini-fast", query, systemPrompt, PROVIDER_TIMEOUTS.grok
     );
-    await setForMode(_currentMode, "grok", query, text, tier || "snapshot", "grok-3-mini-fast", _currentLocale);
-    await recordSuccess("grok");
-    await recordSpend("grok");
     logger.provider("success", { provider: "grok", model: "grok-3-mini-fast", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    await recordFailure("grok");
     logger.provider("error", { provider: "grok", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
 }
 
 async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
-  const cached = await getForMode(_currentMode, "perplexity", query, tier || "snapshot", "sonar", _currentLocale);
-  if (cached) { logger.cache("hit", { engine: "perplexity", tier }); return { response: cached }; }
-  
-  const skip = await shouldSkipProvider("perplexity");
-  if (skip.skip) { logger.provider("skipped", { provider: "perplexity", reason: skip.reason }); return { response: "" }; }
-  
   const apiKey = process.env.PERPLEXITY_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "perplexity" }); return { response: "" }; }
   
@@ -471,13 +424,9 @@ async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?
     const text = await callOpenAICompatible(
       "https://api.perplexity.ai", apiKey, "sonar", query, systemPrompt, PROVIDER_TIMEOUTS.perplexity
     );
-    await setForMode(_currentMode, "perplexity", query, text, tier || "snapshot", "sonar", _currentLocale);
-    await recordSuccess("perplexity");
-    await recordSpend("perplexity");
     logger.provider("success", { provider: "perplexity", model: "sonar", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
-    await recordFailure("perplexity");
     logger.provider("error", { provider: "perplexity", error: error.message, durationMs: Date.now() - start });
     return { response: "" };
   }
@@ -487,10 +436,10 @@ async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?
 
 export function getEnginesForTier(tier: string): EngineConfig[] {
   const engines: EngineConfig[] = [
-    { name: "ChatGPT", tier: "snapshot", queryFn: queryChatGPTEngine, model: "gpt-4o-mini" },
-    { name: "Gemini", tier: "snapshot", queryFn: queryGeminiEngine, model: "gemini-2.0-flash" },
-    { name: "Claude", tier: "monitor", queryFn: queryClaudeEngine, model: "claude-3-haiku" },
-    { name: "Grok", tier: "agency", queryFn: queryGrokEngine, model: "grok-3-mini-fast" },
+    { name: "Claude", tier: "snapshot", queryFn: queryClaudeEngine, model: "claude-3-haiku" },
+    { name: "Grok", tier: "snapshot", queryFn: queryGrokEngine, model: "grok-3-mini-fast" },
+    { name: "ChatGPT", tier: "monitor", queryFn: queryChatGPTEngine, model: "gpt-4o-mini" },
+    { name: "Gemini", tier: "monitor", queryFn: queryGeminiEngine, model: "gemini-2.0-flash" },
     { name: "Perplexity", tier: "agency", queryFn: queryPerplexityEngine, model: "sonar" },
   ];
   

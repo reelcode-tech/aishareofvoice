@@ -1,15 +1,9 @@
 // Main audit orchestrator — coordinates all engine components
-// Speed-optimized: batched parallel API calls, concurrent GEO audit
-// Gap 1: Live vs Benchmark mode (cache bypass for benchmarks)
-// Gap 7: Version metadata stored with every audit
-// Gap 16: Metadata enrichment (latency, cache stats, cost per query)
-// Gap 18: Within-run query deduplication
-// Gap 19: GEO audit caching in Redis
-// Gap 20: Brand detection caching in Redis
-// Gap 21: Full raw response storage
+// Dynamic query generation: one cheap LLM call produces tailored queries per brand
+// Competitors flow through the entire pipeline: query gen → AI queries → scoring
 
 import { detectBrandFromUrl } from "./brand-detection";
-import { getQueriesForBrand } from "./query-templates";
+import { generateQueries } from "./query-generator";
 import { getEnginesForTier, queryEnginesBatch, type EngineResult } from "./ai-engines";
 import { runGeoAudit, type GeoAuditResult } from "./geo-audit";
 import { calculateScores, type ScoringResult } from "./scoring";
@@ -18,6 +12,7 @@ import { buildVersionMetadata, type AuditVersionMetadata } from "./versioning";
 import { deduplicateQueries, getDedupeStats } from "./query-dedup";
 import { getCachedGeoAudit, setCachedGeoAudit } from "./result-cache";
 import { getCachedBrandDetection, setCachedBrandDetection } from "./result-cache";
+import { logger } from "./logger";
 import type { AuditRequest } from "@shared/schema";
 
 export interface AuditResult {
@@ -25,25 +20,23 @@ export interface AuditResult {
   brandUrl: string;
   category: string;
   tier: string;
-  mode: "live" | "benchmark"; // Gap 1
+  mode: "live" | "benchmark";
   language: string;
   scores: ScoringResult;
   geoAudit: GeoAuditResult;
   recommendations: Recommendation[];
   engineResults: EngineResult[];
   customCompetitors: string[];
+  generatedQueries: { query: string; intent: string }[]; // The actual queries that were run
   timestamp: string;
-  // Gap 7: Version metadata for reproducibility
   versionMetadata: AuditVersionMetadata;
-  // Gap 16: Enriched metadata
   auditMetadata: AuditMetadata;
-  // Gap 21: Raw responses for reprocessing
   rawResponses: RawResponse[];
 }
 
-// Gap 16: Enriched audit metadata
 export interface AuditMetadata {
   totalDurationMs: number;
+  queryGenDurationMs: number;
   queryDurationMs: number;
   geoDurationMs: number;
   scoringDurationMs: number;
@@ -57,7 +50,6 @@ export interface AuditMetadata {
   estimatedCostCents: number;
 }
 
-// Gap 21: Raw response storage
 interface RawResponse {
   engine: string;
   model: string;
@@ -68,14 +60,13 @@ interface RawResponse {
 
 export async function runAudit(request: AuditRequest): Promise<AuditResult> {
   const url = request.url.startsWith("http") ? request.url : `https://${request.url}`;
-  const mode = (request as any).mode || "live"; // Gap 1: live vs benchmark
+  const mode = (request as any).mode || "live";
   
-  // Step 1: Detect brand and category (Gap 20: check Redis cache first)
+  // Step 1: Detect brand and category
   let brandName = request.brandName || "";
   let category = request.category || "";
   
   if (!brandName || !category) {
-    // Gap 20: Check brand detection cache
     const cachedBrand = await getCachedBrandDetection(url);
     if (cachedBrand && !brandName) brandName = cachedBrand.brand;
     if (cachedBrand && !category) category = cachedBrand.category;
@@ -85,7 +76,6 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
       if (!brandName) brandName = detected?.brand || "Unknown Brand";
       if (!category) category = detected?.category || "general";
       
-      // Cache the detection result
       if (detected?.brand) {
         await setCachedBrandDetection(url, {
           brand: detected.brand,
@@ -98,26 +88,48 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
   
   const tier = request.tier || "snapshot";
   const language = request.language || "en";
+  const customCompetitors = request.customCompetitors || [];
   
   const auditStartTime = Date.now();
-  console.log(`[Audit] Starting ${mode} audit for ${brandName} (${category}) at ${url}, tier=${tier}`);
+  logger.info("audit_start", {
+    brand: brandName, category, url, tier, mode,
+    competitors: customCompetitors.length,
+  });
   
-  // Step 2: Get queries and engines
-  const rawQueries = getQueriesForBrand(brandName, category, language, tier as any);
+  // Step 2: Generate tailored queries using LLM
+  // This is the key change: queries are dynamically generated per brand/category/competitors
+  // Cost: ~$0.02 (one Gemini Flash call)
+  const queryGenStartTime = Date.now();
+  const rawQueries = await generateQueries(
+    brandName,
+    category,
+    customCompetitors,
+    tier as "snapshot" | "monitor" | "agency",
+    language,
+  );
+  const queryGenDurationMs = Date.now() - queryGenStartTime;
   
-  // Gap 18: Deduplicate queries within this run
+  // Deduplicate within this run
   const queries = deduplicateQueries(rawQueries);
   const dedupeStats = getDedupeStats(rawQueries, queries);
   if (dedupeStats.removedCount > 0) {
-    console.log(`[Audit] Deduped ${dedupeStats.removedCount} duplicate queries (${dedupeStats.originalCount} → ${dedupeStats.dedupedCount})`);
+    logger.info("query_dedup", {
+      original: dedupeStats.originalCount,
+      deduped: dedupeStats.dedupedCount,
+      removed: dedupeStats.removedCount,
+    });
   }
   
   const engines = getEnginesForTier(tier);
   
-  console.log(`[Audit] Running ${queries.length} queries across ${engines.length} engines (${engines.map(e => e.name).join(', ')})...`);
+  logger.info("audit_queries_ready", {
+    queryCount: queries.length,
+    engineCount: engines.length,
+    engines: engines.map(e => e.name).join(", "),
+    queryGenMs: queryGenDurationMs,
+  });
   
   // Step 3: Run GEO audit and AI engine queries IN PARALLEL
-  // Gap 19: Check GEO cache first (in live mode only; benchmark = always fresh)
   const geoStartTime = Date.now();
   let geoAudit: GeoAuditResult;
   
@@ -125,27 +137,29 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
     const cachedGeo = await getCachedGeoAudit(url);
     if (cachedGeo) {
       geoAudit = cachedGeo;
-      console.log("[Audit] GEO audit from cache");
+      logger.info("geo_cache_hit", { url });
     } else {
       geoAudit = await runGeoAudit(url);
       await setCachedGeoAudit(url, geoAudit);
     }
   } else {
-    // Benchmark mode: always fresh
     geoAudit = await runGeoAudit(url);
   }
   const geoDurationMs = Date.now() - geoStartTime;
   
-  // Gap 1: Pass mode to engine queries (benchmark = skip cache)
   const queryStartTime = Date.now();
   const engineResults = await queryEnginesBatch(engines, queries, brandName, category, tier, mode, language);
   const queryDurationMs = Date.now() - queryStartTime;
   
-  console.log(`[Audit] Got ${engineResults.length} engine results in ${(queryDurationMs / 1000).toFixed(1)}s, GEO audit in ${(geoDurationMs / 1000).toFixed(1)}s`);
+  logger.info("audit_queries_complete", {
+    resultCount: engineResults.length,
+    queryMs: queryDurationMs,
+    geoMs: geoDurationMs,
+  });
   
-  // Step 4: Calculate scores
+  // Step 4: Calculate scores — pass customCompetitors so they're included in competitive analysis
   const scoringStartTime = Date.now();
-  const scores = calculateScores(brandName, category, engineResults, geoAudit);
+  const scores = calculateScores(brandName, category, engineResults, geoAudit, customCompetitors);
   const scoringDurationMs = Date.now() - scoringStartTime;
   
   // Step 5: Generate context-aware recommendations
@@ -154,9 +168,15 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
   );
   
   const totalDurationMs = Date.now() - auditStartTime;
-  console.log(`[Audit] Score: ${scores.overall.score}/100 (${scores.overall.grade}), ${recommendations.length} recommendations, total: ${(totalDurationMs / 1000).toFixed(1)}s`);
+  logger.info("audit_complete", {
+    brand: brandName,
+    score: scores.overall.score,
+    grade: scores.overall.grade,
+    recommendations: recommendations.length,
+    totalMs: totalDurationMs,
+  });
   
-  // Gap 7: Build version metadata for reproducibility
+  // Build version metadata
   const engineModels: Record<string, string> = {};
   for (const e of engines) {
     engineModels[e.name] = e.model;
@@ -165,24 +185,21 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
     tier, engineModels, queries.length, engines.length, language, mode as "live" | "benchmark"
   );
   
-  // Gap 16: Build enriched metadata
-  // Count cache hits vs misses from engine results
+  // Build enriched metadata
   const totalApiCalls = engines.length * queries.length;
-  const responsesWithContent = engineResults.filter(r => r.response && r.response.length > 0).length;
-  // Rough heuristic: if response is empty, it was likely a cache miss that failed or was skipped
-  const cacheHits = 0; // Will be tracked at the engine level in future
+  const cacheHits = 0;
   
-  // Estimate cost (using provider cost data from spend-tracker)
   const COST_CENTS: Record<string, number> = {
     ChatGPT: 0.06, Gemini: 0.02, Claude: 0.03, Grok: 1.50, Perplexity: 0.50,
   };
-  let estimatedCostCents = 0;
+  let estimatedCostCents = 0.02; // Query generation cost (Gemini Flash)
   for (const e of engines) {
     estimatedCostCents += (COST_CENTS[e.name] || 0.05) * queries.length;
   }
   
   const auditMetadata: AuditMetadata = {
     totalDurationMs,
+    queryGenDurationMs,
     queryDurationMs,
     geoDurationMs,
     scoringDurationMs,
@@ -196,7 +213,7 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
     estimatedCostCents: Math.round(estimatedCostCents * 100) / 100,
   };
   
-  // Gap 21: Store raw responses for reprocessing
+  // Store raw responses for reprocessing
   const rawResponses: RawResponse[] = engineResults.map(r => ({
     engine: r.engine,
     model: r.model,
@@ -216,7 +233,8 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
     geoAudit,
     recommendations,
     engineResults,
-    customCompetitors: request.customCompetitors || [],
+    customCompetitors,
+    generatedQueries: queries,
     timestamp: new Date().toISOString(),
     versionMetadata,
     auditMetadata,

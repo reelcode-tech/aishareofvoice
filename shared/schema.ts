@@ -49,6 +49,7 @@ export const audits = pgTable("audits", {
   rawResponses: jsonb("raw_responses"), // Gap 21: full raw AI responses for reprocessing
   versionMetadata: jsonb("version_metadata"), // Gap 7: scoring/extraction versions for reproducibility
   auditMetadata: jsonb("audit_metadata"), // Gap 16: enriched metadata (latency, cache stats, cost)
+  generatedQueries: jsonb("generated_queries"), // Dynamic LLM-generated queries that were actually run
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

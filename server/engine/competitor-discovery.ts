@@ -2,11 +2,11 @@
  * Lightweight competitor discovery using AI.
  * Called BEFORE the full audit so users can preview and edit the competitor set.
  * 
- * Uses a single fast AI call to identify likely competitors for a brand+category.
- * Much cheaper/faster than running the full audit pipeline.
+ * Multi-provider: tries Claude → OpenAI → Gemini.
+ * Direct fetch — no SDK — to avoid Workers `cache` field incompatibility.
  */
 
-import OpenAI from "openai";
+import { logger } from "./logger";
 
 /**
  * Ask AI to identify the top competitors for a brand in a given category.
@@ -17,8 +17,7 @@ export async function discoverCompetitors(
   category: string,
   url?: string
 ): Promise<string[]> {
-  const client = new OpenAI();
-
+  const systemMsg = "You are a market research analyst. Return only brand names, one per line. No numbering, no explanations.";
   const prompt = `You are a market research analyst. For the brand "${brandName}" in the "${category}" category${url ? ` (website: ${url})` : ""}, list the top 8 direct competitors.
 
 Rules:
@@ -39,36 +38,111 @@ Eucerin
 Paula's Choice
 Aveeno`;
 
-  try {
-    const response = await client.responses.create({
-      model: "gpt5_nano",
-      instructions: "You are a market research analyst. Return only brand names, one per line. No numbering, no explanations.",
-      input: prompt,
-    });
+  let text = "";
 
-    const text = typeof response.output === "string"
-      ? response.output
-      : response.output_text || "";
+  // 1. Try Claude (primary)
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (anthropicKey && !text) {
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": anthropicKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-3-haiku-20240307",
+          max_tokens: 256,
+          system: systemMsg,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (r.ok) {
+        const data = await r.json() as any;
+        text = data.content?.map((c: any) => c.type === "text" ? c.text : "").join("") || "";
+        if (text.length > 5) logger.info("discover_provider", { provider: "claude" });
+        else text = "";
+      } else {
+        const err = await r.text();
+        logger.warn("discover_claude_fail", { status: r.status, error: err.slice(0, 100) });
+      }
+    } catch (e: any) { logger.warn("discover_claude_error", { error: e.message }); }
+  }
 
-    // Parse response: one brand per line, filter out empty lines and noise
-    const competitors = text
-      .split("\n")
-      .map((line: string) => line.replace(/^\d+[\.\)]\s*/, "").replace(/^[-•*]\s*/, "").trim())
-      .filter((line: string) => {
-        if (!line) return false;
-        if (line.length < 2 || line.length > 40) return false;
-        if (line.toLowerCase() === brandName.toLowerCase()) return false;
-        // Skip lines that look like explanations
-        if (line.includes(":") && line.length > 30) return false;
-        if (line.startsWith("Note") || line.startsWith("These") || line.startsWith("The ")) return false;
-        return true;
-      })
-      .slice(0, 8);
+  // 2. Try OpenAI
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey && !text) {
+    try {
+      const r = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${openaiKey}` },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          messages: [{ role: "system", content: systemMsg }, { role: "user", content: prompt }],
+          max_tokens: 256,
+          temperature: 0.3,
+        }),
+      });
+      if (r.ok) {
+        const data = await r.json() as any;
+        text = data.choices?.[0]?.message?.content || "";
+        if (text.length > 5) logger.info("discover_provider", { provider: "openai" });
+        else text = "";
+      } else {
+        const err = await r.text();
+        logger.warn("discover_openai_fail", { status: r.status, error: err.slice(0, 100) });
+      }
+    } catch (e: any) { logger.warn("discover_openai_error", { error: e.message }); }
+  }
 
-    return competitors;
-  } catch (error: any) {
-    console.error("[Discover] AI call failed:", error.message);
-    // Return empty list — the user can still manually add competitors
+  // 3. Try Gemini
+  const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
+  if (geminiKey && !text) {
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: systemMsg }] },
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 256 },
+          }),
+        }
+      );
+      if (r.ok) {
+        const data = await r.json() as any;
+        text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        if (text.length > 5) logger.info("discover_provider", { provider: "gemini" });
+        else text = "";
+      } else {
+        const err = await r.text();
+        logger.warn("discover_gemini_fail", { status: r.status, error: err.slice(0, 100) });
+      }
+    } catch (e: any) { logger.warn("discover_gemini_error", { error: e.message }); }
+  }
+
+  if (!text) {
+    logger.warn("discover_all_failed", { brand: brandName });
     return [];
   }
+
+  // Parse response: one brand per line, filter out empty lines and noise
+  const competitors = text
+    .split("\n")
+    .map((line: string) => line.replace(/^\d+[\.)\]]\s*/, "").replace(/^[-•*]\s*/, "").trim())
+    .filter((line: string) => {
+      if (!line) return false;
+      if (line.length < 2 || line.length > 40) return false;
+      if (line.toLowerCase() === brandName.toLowerCase()) return false;
+      if (line.includes(":") && line.length > 30) return false;
+      if (line.startsWith("Note") || line.startsWith("These") || line.startsWith("The ")) return false;
+      return true;
+    })
+    .slice(0, 8);
+
+  logger.info("discover_success", { brand: brandName, competitors: competitors.length });
+  return competitors;
 }

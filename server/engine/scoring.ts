@@ -191,7 +191,8 @@ export function calculateScores(
   brandName: string,
   category: string,
   engineResults: EngineResult[],
-  geoAudit: GeoAuditResult
+  geoAudit: GeoAuditResult,
+  customCompetitors: string[] = [],
 ): ScoringResult {
   // Group results by query
   const queryGroups = new Map<string, EngineResult[]>();
@@ -250,6 +251,7 @@ export function calculateScores(
   }
   
   // Competitor extraction and ranking
+  // 1. Extract ALL brands mentioned by AI engines
   const competitorMentions = new Map<string, number>();
   for (const result of engineResults) {
     for (const rawBrand of result.mentionedBrands) {
@@ -272,8 +274,43 @@ export function calculateScores(
     .sort((a, b) => b.mentionRate - a.mentionRate);
   
   // Filter out cross-category noise (e.g., Apple in skincare, Nike in mattresses)
-  const competitors = filterCategoryRelevantCompetitors(rawCompetitors, category, brandName)
-    .slice(0, 10);
+  let filteredCompetitors = filterCategoryRelevantCompetitors(rawCompetitors, category, brandName);
+  
+  // 2. If user provided custom competitors, ensure they appear in the list.
+  //    This is critical: the user's specified competitors are the ones they CARE about.
+  //    If AI didn't mention them, that's data too (the competitor has 0% mention rate).
+  if (customCompetitors.length > 0) {
+    const existingNames = new Set(filteredCompetitors.map(c => c.name.toLowerCase()));
+    for (const custom of customCompetitors) {
+      const normalized = normalizeBrandName(custom) || custom;
+      if (normalized.toLowerCase() === brandName.toLowerCase()) continue;
+      if (!existingNames.has(normalized.toLowerCase())) {
+        // Competitor wasn't mentioned by AI at all — still include with 0 rate
+        filteredCompetitors.push({
+          name: normalized,
+          mentionCount: 0,
+          totalQueries: uniqueQueries,
+          mentionRate: 0,
+          archetype: "invisible",
+        });
+        existingNames.add(normalized.toLowerCase());
+      }
+    }
+    
+    // Prioritize custom competitors: sort so user-specified ones float to top (by mention rate)
+    // but don't reorder within the AI-discovered set
+    const customSet = new Set(customCompetitors.map(c => (normalizeBrandName(c) || c).toLowerCase()));
+    filteredCompetitors.sort((a, b) => {
+      const aIsCustom = customSet.has(a.name.toLowerCase()) ? 1 : 0;
+      const bIsCustom = customSet.has(b.name.toLowerCase()) ? 1 : 0;
+      // Both custom or both not: sort by mention rate
+      if (aIsCustom === bIsCustom) return b.mentionRate - a.mentionRate;
+      // Custom competitors go first
+      return bIsCustom - aIsCustom;
+    });
+  }
+  
+  const competitors = filteredCompetitors.slice(0, 15); // Allow more with custom
   
   // Sentiment breakdown
   const sentimentBreakdown = {
