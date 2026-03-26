@@ -3,6 +3,7 @@ import { type IStorage } from "./storage";
 import { runAudit } from "./engine/audit-runner";
 import { detectBrandFromUrl, detectCategoryWithAI } from "./engine/brand-detection";
 import { discoverCompetitors } from "./engine/competitor-discovery";
+import { pushLeadToAttio } from "./engine/attio";
 import { auditRequestSchema } from "@shared/schema";
 import { checkDedupe, markInFlight, markCompleted } from "./engine/idempotency";
 import { checkSpendBudget, getTodaySpend, recordAuditSpend } from "./engine/spend-tracker";
@@ -266,6 +267,18 @@ export function createApiRoutes(storage: IStorage) {
         // NOTE: Lead tracking, spend tracking, dedupe, and concurrency
         // Redis calls are disabled to stay under 50 subrequest limit.
         // Re-enable with Workers Paid plan.
+        
+        // Push lead to Attio CRM (fire-and-forget, 1 subrequest)
+        if (data.email) {
+          pushLeadToAttio(
+            data.email,
+            result.brandName,
+            result.brandUrl,
+            result.tier,
+            result.scores.overall.score,
+            saved.id
+          ).catch(err => logger.error("attio_push_error", { error: err.message }));
+        }
         
         return c.json({ id: saved.id, jobId, ...result });
       } catch (auditError: any) {
