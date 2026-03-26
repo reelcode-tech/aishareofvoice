@@ -559,14 +559,14 @@ export function createApiRoutes(storage: IStorage) {
           const r = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-            body: JSON.stringify({ model: "claude-3-haiku-20240307", max_tokens: 100, messages: [{ role: "user", content: testPrompt }] }),
+            body: JSON.stringify({ model: "claude-3-5-haiku-latest", max_tokens: 100, messages: [{ role: "user", content: testPrompt }] }),
           });
           const data = await r.json() as any;
           if (!r.ok) { results.claude = { error: data.error?.message || `HTTP ${r.status}`, status: r.status }; }
-          else { results.claude = { ok: true, model: "claude-3-haiku", response: (data.content?.map((c: any) => c.text).join("") || "").slice(0, 200) }; }
+          else { results.claude = { ok: true, model: "claude-3-5-haiku-latest", response: (data.content?.map((c: any) => c.text).join("") || "").slice(0, 200) }; }
         } catch (e: any) { results.claude = { error: e.message }; }
       })(),
-      testOpenAI("grok", "https://api.x.ai/v1", "XAI_API_KEY", "grok-3-mini-fast"),
+      testOpenAI("grok", "https://api.x.ai/v1", "XAI_API_KEY", "grok-3-mini"),
       testOpenAI("perplexity", "https://api.perplexity.ai", "PERPLEXITY_API_KEY", "sonar"),
     ]);
     

@@ -1,8 +1,10 @@
 // Multi-engine AI query layer — Production version
 // Uses direct API calls to each provider with explicit API keys
-// Snapshot: ChatGPT + Gemini (2 engines, cheapest)
-// Monitor: + Claude (3 engines)
-// Agency: + Grok + Perplexity (5 engines)
+// The 5 engines are the AI platforms brands care about: Gemini, Grok, ChatGPT, Perplexity, Claude
+// Snapshot (free): Gemini + Grok (2 engines × 12 queries = 24 calls)
+// Monitor ($79/mo): + ChatGPT (3 engines × 25 queries = 75 calls)
+// Agency ($349/mo): + Perplexity + Claude (5 engines × 25 queries = 125 calls)
+// NOTE: Claude Haiku is ALSO the intelligence model for query gen / brand detection / competitor discovery
 
 import { getForMode, setForMode } from "./cache";
 import { recordFailure, recordSuccess, shouldSkipProvider } from "./circuit-breaker";
@@ -386,11 +388,11 @@ async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: s
 async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "claude" }); return { response: "" }; }
-  
+
   const start = Date.now();
   try {
-    const text = await callAnthropic(apiKey, "claude-3-haiku-20240307", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
-    logger.provider("success", { provider: "claude", model: "claude-3-haiku-20240307", durationMs: Date.now() - start });
+    const text = await callAnthropic(apiKey, "claude-3-5-haiku-latest", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
+    logger.provider("success", { provider: "claude", model: "claude-3-5-haiku-latest", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
     logger.provider("error", { provider: "claude", error: error.message, durationMs: Date.now() - start });
@@ -401,13 +403,13 @@ async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: st
 async function queryGrokEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "grok" }); return { response: "" }; }
-  
+
   const start = Date.now();
   try {
     const text = await callOpenAICompatible(
-      "https://api.x.ai/v1", apiKey, "grok-3-mini-fast", query, systemPrompt, PROVIDER_TIMEOUTS.grok
+      "https://api.x.ai/v1", apiKey, "grok-3-mini", query, systemPrompt, PROVIDER_TIMEOUTS.grok
     );
-    logger.provider("success", { provider: "grok", model: "grok-3-mini-fast", durationMs: Date.now() - start });
+    logger.provider("success", { provider: "grok", model: "grok-3-mini", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
     logger.provider("error", { provider: "grok", error: error.message, durationMs: Date.now() - start });
@@ -434,20 +436,37 @@ async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?
 
 // ── Engine registry ─────────────────────────────────────────────────
 
+// Query counts per tier — snapshot gets 12 (quick pulse), monitor/agency get 25 (statistical significance)
+export function getQueriesForTier(tier: string): number {
+  const legacyMap: Record<string, string> = { "free": "snapshot", "pro": "monitor", "enterprise": "agency" };
+  const normalizedTier = legacyMap[tier] || tier;
+  const counts: Record<string, number> = { snapshot: 12, monitor: 25, agency: 25 };
+  return counts[normalizedTier] || 12;
+}
+
 export function getEnginesForTier(tier: string): EngineConfig[] {
+  // The 5 AI platforms brands care about showing up on:
+  // Gemini, Grok, ChatGPT, Perplexity, Claude
   const engines: EngineConfig[] = [
-    { name: "Claude", tier: "snapshot", queryFn: queryClaudeEngine, model: "claude-3-haiku" },
-    { name: "Grok", tier: "snapshot", queryFn: queryGrokEngine, model: "grok-3-mini-fast" },
+    { name: "Gemini", tier: "snapshot", queryFn: queryGeminiEngine, model: "gemini-2.0-flash" },
+    { name: "Grok", tier: "snapshot", queryFn: queryGrokEngine, model: "grok-3-mini" },
     { name: "ChatGPT", tier: "monitor", queryFn: queryChatGPTEngine, model: "gpt-4o-mini" },
-    { name: "Gemini", tier: "monitor", queryFn: queryGeminiEngine, model: "gemini-2.0-flash" },
     { name: "Perplexity", tier: "agency", queryFn: queryPerplexityEngine, model: "sonar" },
+    { name: "Claude", tier: "agency", queryFn: queryClaudeEngine, model: "claude-3-5-haiku-latest" },
   ];
-  
+
   const tierOrder = ["snapshot", "monitor", "agency"];
   const legacyMap: Record<string, string> = { "free": "snapshot", "pro": "monitor", "enterprise": "agency" };
   const normalizedTier = legacyMap[tier] || tier;
   const tierIndex = tierOrder.indexOf(normalizedTier);
-  
+
+  // TODO: Monitor (75 calls) and Agency (125 calls) exceed the 50-subrequest limit on
+  // Cloudflare Workers free plan. Implement chunked execution (batch across multiple
+  // requests using DB to track progress) when those tiers are activated.
+  // Snapshot: 12 queries × 2 engines = 24 calls + ~3 intelligence = 27 total ✓
+  // Monitor: 25 queries × 3 engines = 75 calls — EXCEEDS 50 LIMIT
+  // Agency: 25 queries × 5 engines = 125 calls — EXCEEDS 50 LIMIT
+
   return engines.filter(e => tierOrder.indexOf(e.tier) <= tierIndex);
 }
 

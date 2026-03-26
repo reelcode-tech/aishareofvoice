@@ -26,7 +26,8 @@ export const ASOV_VERSIONS = {
   competitorAnalysis: "1.0.0",
   
   // Overall system version — bump on any breaking change
-  system: "2.2.0",
+  // v3.0.0: Engine tier restructure (Gemini+Grok=snapshot, +ChatGPT=monitor, +Perplexity+Claude=agency)
+  system: "3.0.0",
 } as const;
 
 export type VersionSnapshot = typeof ASOV_VERSIONS;

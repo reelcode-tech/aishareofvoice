@@ -189,8 +189,14 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
   const totalApiCalls = engines.length * queries.length;
   const cacheHits = 0;
   
+  // Cost per query in cents (input + output at ~500 tokens each)
+  // Gemini: $0.10/$0.40 per 1M → ~$0.00025/query → 0.025¢
+  // Grok: $0.25/$0.50 per 1M → ~$0.000375/query → 0.0375¢
+  // ChatGPT: $0.15/$0.60 per 1M → ~$0.000375/query → 0.0375¢
+  // Perplexity: ~$1.00/$1.00 per 1M → ~$0.001/query → 0.1¢
+  // Claude Haiku: $0.25/$1.25 per 1M → ~$0.00075/query → 0.075¢
   const COST_CENTS: Record<string, number> = {
-    ChatGPT: 0.06, Gemini: 0.02, Claude: 0.03, Grok: 1.50, Perplexity: 0.50,
+    Gemini: 0.025, Grok: 0.0375, ChatGPT: 0.0375, Perplexity: 0.10, Claude: 0.075,
   };
   let estimatedCostCents = 0.02; // Query generation cost (Gemini Flash)
   for (const e of engines) {

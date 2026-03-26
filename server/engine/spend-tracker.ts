@@ -19,24 +19,24 @@ function getRedis(): Redis | null {
 }
 
 // Estimated cost per provider call (in cents, not dollars)
-// Updated with real cost data from API responses:
-// - Grok: ~$0.013 per call (1,328,250 usd_ticks = ~1.3¢, includes reasoning tokens)
-// - Perplexity: ~$0.50 per call ($0.005 request_cost base — EXPENSIVE for small budgets)
-// - Claude: ~$0.03 per call (haiku is cheap)
-// - ChatGPT: ~$0.06 per call (gpt-4o-mini)
-// - Gemini: ~$0.02 per call (flash is cheapest)
+// Based on ~500 token input + ~500 token output per query
+// Gemini 2.0 Flash: $0.10/$0.40 per 1M tokens
+// Grok 3 Mini: $0.25/$0.50 per 1M tokens
+// ChatGPT gpt-4o-mini: $0.15/$0.60 per 1M tokens
+// Perplexity Sonar: ~$1.00/$1.00 per 1M tokens
+// Claude 3.5 Haiku: $0.25/$1.25 per 1M tokens
 const PROVIDER_COST_CENTS: Record<string, number> = {
-  chatgpt: 0.06,     // gpt-4o-mini: ~$0.15/1M input + $0.60/1M output
-  gemini: 0.02,      // gemini-2.0-flash: cheapest provider
-  claude: 0.03,      // claude-3-haiku: $0.25/1M input + $1.25/1M output
-  grok: 1.50,        // grok-3-mini-fast: ~$0.013/call BUT reasoning tokens are expensive
-  perplexity: 0.50,  // sonar: $0.005/request base cost — most expensive per-call
+  gemini: 0.025,     // gemini-2.0-flash: cheapest provider
+  grok: 0.0375,      // grok-3-mini: $0.25/1M in + $0.50/1M out
+  chatgpt: 0.0375,   // gpt-4o-mini: $0.15/1M in + $0.60/1M out
+  perplexity: 0.10,  // sonar: ~$1.00/1M in + $1.00/1M out
+  claude: 0.075,     // claude-3-5-haiku-latest: $0.25/1M in + $1.25/1M out
 };
 
 // Per-tier estimated total cost (all queries × all engines)
-// Snapshot: 12 queries × 2 engines = 24 calls → ~$0.02
-// Monitor:  25 queries × 3 engines = 75 calls → ~$0.05
-// Agency:   30 queries × 5 engines = 150 calls → ~$0.10
+// Snapshot: 12 queries × 2 engines (Gemini+Grok) = 24 calls → ~$0.015
+// Monitor:  25 queries × 3 engines (+ChatGPT) = 75 calls → ~$0.08
+// Agency:   25 queries × 5 engines (+Perplexity+Claude) = 125 calls → ~$0.20
 const TIER_WEIGHT: Record<string, number> = {
   snapshot: 1,
   monitor: 3,

@@ -52,7 +52,7 @@ Aveeno`;
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-3-haiku-20240307",
+          model: "claude-3-5-haiku-latest",
           max_tokens: 256,
           system: systemMsg,
           messages: [{ role: "user", content: prompt }],

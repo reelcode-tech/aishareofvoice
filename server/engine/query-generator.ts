@@ -17,10 +17,11 @@ export interface GeneratedQuery {
 }
 
 // Query counts per tier — these are the REAL query counts, no cheating
+// Higher tiers get 25 queries for higher statistical significance
 const TIER_QUERY_COUNTS: Record<string, number> = {
   snapshot: 12,
   monitor: 25,
-  agency: 30,
+  agency: 25,
 };
 
 /**
@@ -43,7 +44,7 @@ async function callQueryGenLLM(prompt: string): Promise<string | null> {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          model: "claude-3-haiku-20240307",
+          model: "claude-3-5-haiku-latest",
           max_tokens: 2048,
           system: systemMsg,
           messages: [{ role: "user", content: prompt }],
