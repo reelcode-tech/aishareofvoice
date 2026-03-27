@@ -98,7 +98,7 @@ export async function setCached(
 // Gap 1: For benchmark mode — skip cache entirely (measurement integrity)
 // "the whole purpose of this app is to measure results from fresh AI runs"
 export async function getForMode(
-  mode: "live" | "benchmark",
+  mode: "live" | "benchmark" | "test",
   engine: string,
   query: string,
   tier: string = "snapshot",
@@ -110,7 +110,7 @@ export async function getForMode(
 }
 
 export async function setForMode(
-  mode: "live" | "benchmark",
+  mode: "live" | "benchmark" | "test",
   engine: string,
   query: string,
   response: string,

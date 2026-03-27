@@ -66,7 +66,7 @@ export const auditRequestSchema = z.object({
   brandName: z.string().optional(),
   category: z.string().optional(),
   tier: z.enum(["snapshot", "monitor", "agency"]).default("snapshot"),
-  mode: z.enum(["live", "benchmark"]).default("live"), // Gap 1: live vs benchmark mode
+  mode: z.enum(["live", "benchmark", "test"]).default("live"), // Gap 1: live vs benchmark mode; "test" = mock responses, no API calls
   email: z.string().email().optional(),
   language: z.string().min(2).max(10).default("en"), // Gap 22: tighter locale validation
   customCompetitors: z

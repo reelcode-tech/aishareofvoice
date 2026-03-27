@@ -116,7 +116,7 @@ export async function recordSuccess(provider: string): Promise<void> {
  */
 export async function shouldSkipProvider(
   provider: string,
-  mode: "live" | "benchmark" = "live"
+  mode: "live" | "benchmark" | "test" = "live"
 ): Promise<{ skip: boolean; reason?: string }> {
   const { state, failures, lastFailure } = await getCircuitState(provider);
   

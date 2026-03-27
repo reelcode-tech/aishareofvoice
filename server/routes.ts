@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { type IStorage } from "./storage";
 import { runAudit } from "./engine/audit-runner";
+import { getEnginesForTier, queryEngine } from "./engine/ai-engines";
 import { detectBrandFromUrl, detectCategoryWithAI } from "./engine/brand-detection";
 import { discoverCompetitors } from "./engine/competitor-discovery";
 import { pushLeadToAttio } from "./engine/attio";
@@ -644,6 +645,51 @@ export function createApiRoutes(storage: IStorage) {
     }
     
     return c.json(results);
+  });
+
+  // ── Debug: test a single engine with one query (minimal API cost) ──
+  api.get("/debug/test-single", async (c) => {
+    try {
+      const engineName = c.req.query("engine");
+      const query = c.req.query("query") || "What are the best CRM platforms for small businesses?";
+      const brand = c.req.query("brand") || "TestBrand";
+
+      if (!engineName) {
+        return c.json({
+          error: "engine parameter required",
+          usage: "/api/debug/test-single?engine=gemini&query=best+crm+software&brand=HubSpot",
+          available: ["gemini", "grok", "chatgpt", "perplexity", "claude"],
+        }, 400);
+      }
+
+      // Find the matching engine from the full set (agency tier has all 5)
+      const allEngines = getEnginesForTier("agency");
+      const engine = allEngines.find(e => e.name.toLowerCase() === engineName.toLowerCase());
+      if (!engine) {
+        return c.json({
+          error: `Unknown engine: ${engineName}`,
+          available: allEngines.map(e => e.name.toLowerCase()),
+        }, 400);
+      }
+
+      const start = Date.now();
+      const result = await queryEngine(engine, query, brand, "general", "snapshot");
+      const durationMs = Date.now() - start;
+
+      return c.json({
+        engine: result.engine,
+        model: result.model,
+        query: result.query,
+        response: result.response,
+        mentionsBrand: result.mentionsBrand,
+        mentionedBrands: result.mentionedBrands,
+        sentiment: result.sentiment,
+        citations: result.citations,
+        durationMs,
+      });
+    } catch (error: any) {
+      return c.json({ error: error.message }, 500);
+    }
   });
 
   // ── Admin: system status ───────────────────────────────────────────
