@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import Landing from "./pages/landing";
 import AuditForm from "./pages/audit-form";
 import Results from "./pages/results";
+import AdminQueue from "./pages/admin-queue";
 import NotFound from "./pages/not-found";
 
 function AppRouter() {
@@ -16,6 +17,7 @@ function AppRouter() {
         <Route path="/audit" component={AuditForm} />
         <Route path="/audit/:encodedUrl" component={AuditForm} />
         <Route path="/results/:id" component={Results} />
+        <Route path="/admin/queue" component={AdminQueue} />
         <Route component={NotFound} />
       </Switch>
     </Router>

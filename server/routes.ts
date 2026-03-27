@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { type IStorage } from "./storage";
 import { runAudit } from "./engine/audit-runner";
-import { getEnginesForTier, queryEngine } from "./engine/ai-engines";
+import { getEnginesForTier, queryEngine, extractBrands, analyzeSentiment, extractCitations, getBrandExtractionSystemPrompt } from "./engine/ai-engines";
+import type { EngineResult } from "./engine/ai-engines";
 import { detectBrandFromUrl, detectCategoryWithAI } from "./engine/brand-detection";
 import { discoverCompetitors } from "./engine/competitor-discovery";
 import { pushLeadToAttio } from "./engine/attio";
@@ -11,6 +12,12 @@ import { checkSpendBudget, getTodaySpend, recordAuditSpend } from "./engine/spen
 import { isDisposableEmail, checkConcurrentLimit, incrementConcurrent, decrementConcurrent, checkProgressiveThrottle, recordAuditTimestamp } from "./engine/abuse-control";
 import { getAllCircuitStates } from "./engine/circuit-breaker";
 import { logger, generateRequestId, setRequestId } from "./engine/logger";
+import { generateQueries } from "./engine/query-generator";
+import { deduplicateQueries } from "./engine/query-dedup";
+import { calculateScores } from "./engine/scoring";
+import { runGeoAudit } from "./engine/geo-audit";
+import { generateRecommendations } from "./engine/recommendations";
+import { buildVersionMetadata } from "./engine/versioning";
 // Gap 2: Concurrency control
 import { checkGlobalCapacity, acquireGlobalWeight, releaseGlobalWeight } from "./engine/concurrency";
 // Gap 5: Async job system
@@ -214,14 +221,84 @@ export function createApiRoutes(storage: IStorage) {
       }
       
       const startTime = Date.now();
-      
+
+      // ── MANUAL MODE: queue prompts instead of calling engines ──
+      if (data.mode === "manual") {
+        try {
+          await markJobRunning(jobId, "Generating queries for manual mode");
+
+          const brandName = data.brandName || detectBrandFromUrl(data.url)?.brand || "Unknown";
+          const category = data.category || "general";
+          const tier = data.tier || "snapshot";
+          const language = data.language || "en";
+          const customCompetitors = data.customCompetitors || [];
+          const url = data.url.startsWith("http") ? data.url : `https://${data.url}`;
+
+          // Step 1: Generate queries (uses Claude Haiku — cheap, still calls API)
+          const rawQueries = await generateQueries(
+            brandName, category, customCompetitors,
+            tier as "snapshot" | "monitor" | "agency", language
+          );
+          const queries = deduplicateQueries(rawQueries);
+
+          // Step 2: Get engines for this tier
+          const engines = getEnginesForTier(tier);
+          const systemPrompt = getBrandExtractionSystemPrompt(category);
+
+          // Step 3: Create audit record with pending_manual status
+          const saved = await storage.createAudit({
+            brandName, brandUrl: url, category, tier,
+            mode: "manual", language,
+            overallScore: null, overallGrade: "Pending Manual",
+            generatedQueries: queries,
+            customCompetitors,
+            createdAt: new Date(),
+          });
+
+          // Step 4: Create prompt queue entries for each engine × query combination
+          const promptTasks = engines.flatMap(engine =>
+            queries.map(q => ({
+              auditId: saved.id,
+              engine: engine.name.toLowerCase(),
+              query: q.query,
+              systemPrompt,
+              status: "pending" as const,
+            }))
+          );
+
+          await storage.createPromptTasks(promptTasks);
+
+          logger.audit("manual_queued", {
+            brand: brandName, auditId: saved.id,
+            engines: engines.length, queries: queries.length,
+            totalPrompts: promptTasks.length,
+          });
+
+          return c.json({
+            id: saved.id,
+            jobId,
+            mode: "manual",
+            status: "pending_manual",
+            brandName, brandUrl: url, category, tier, language,
+            generatedQueries: queries,
+            promptCount: promptTasks.length,
+            engines: engines.map(e => e.name),
+            message: `Created ${promptTasks.length} prompt tasks. Visit /admin/queue to paste responses.`,
+          });
+        } catch (manualError: any) {
+          logger.error("manual_mode_error", { error: manualError.message });
+          throw manualError;
+        }
+      }
+
+      // ── LIVE / TEST / BENCHMARK MODE: normal audit flow ──
       try {
         await markJobRunning(jobId, "Running AI queries");
-        
+
         const result = await runAudit(data);
-        
+
         await updateJobProgress(jobId, 80, "Saving results");
-        
+
         const durationMs = Date.now() - startTime;
         logger.audit("completed", {
           brand: result.brandName,
@@ -232,7 +309,7 @@ export function createApiRoutes(storage: IStorage) {
           engines: result.scores.perEngine ? Object.keys(result.scores.perEngine).length : 0,
           durationMs,
         });
-        
+
         // Save to database (Gap 1: mode, Gap 7: versionMetadata, Gap 16: auditMetadata, Gap 21: rawResponses)
         const saved = await storage.createAudit({
           brandName: result.brandName,
@@ -264,11 +341,11 @@ export function createApiRoutes(storage: IStorage) {
           generatedQueries: result.generatedQueries, // Dynamic queries that were run
           createdAt: new Date(),
         });
-        
+
         // NOTE: Lead tracking, spend tracking, dedupe, and concurrency
         // Redis calls are disabled to stay under 50 subrequest limit.
         // Re-enable with Workers Paid plan.
-        
+
         // Push lead to Attio CRM (fire-and-forget, 1 subrequest)
         if (data.email) {
           pushLeadToAttio(
@@ -280,7 +357,7 @@ export function createApiRoutes(storage: IStorage) {
             saved.id
           ).catch(err => logger.error("attio_push_error", { error: err.message }));
         }
-        
+
         return c.json({ id: saved.id, jobId, ...result });
       } catch (auditError: any) {
         throw auditError;
@@ -748,6 +825,178 @@ export function createApiRoutes(storage: IStorage) {
       const result = await cleanupExpiredAudits(db);
       return c.json({ status: "ok", ...result });
     } catch (error: any) {
+      return c.json({ error: error.message }, 500);
+    }
+  });
+
+  // ── Admin: Manual Prompt Queue ──────────────────────────────────────
+
+  // GET /api/admin/queue — list prompt tasks (optionally filter by audit_id)
+  api.get("/admin/queue", async (c) => {
+    try {
+      const auditIdParam = c.req.query("audit_id");
+      let tasks;
+      if (auditIdParam) {
+        tasks = await storage.getPromptTasksByAudit(parseInt(auditIdParam));
+      } else {
+        tasks = await storage.getPendingPromptTasks();
+      }
+
+      // Group by auditId for convenience
+      const grouped: Record<number, { auditId: number; tasks: typeof tasks; pendingCount: number; completedCount: number }> = {};
+      for (const task of tasks) {
+        if (!grouped[task.auditId]) {
+          grouped[task.auditId] = { auditId: task.auditId, tasks: [], pendingCount: 0, completedCount: 0 };
+        }
+        grouped[task.auditId].tasks.push(task);
+        if (task.status === "pending") grouped[task.auditId].pendingCount++;
+        else grouped[task.auditId].completedCount++;
+      }
+
+      return c.json({ audits: Object.values(grouped), totalTasks: tasks.length });
+    } catch (error: any) {
+      return c.json({ error: error.message }, 500);
+    }
+  });
+
+  // POST /api/admin/queue/:id/response — submit a pasted response for a prompt task
+  api.post("/admin/queue/:id/response", async (c) => {
+    try {
+      const id = parseInt(c.req.param("id"));
+      const { response } = await c.req.json();
+      if (!response || typeof response !== "string" || response.trim().length === 0) {
+        return c.json({ error: "Response text is required" }, 400);
+      }
+
+      const task = await storage.getPromptTask(id);
+      if (!task) return c.json({ error: "Prompt task not found" }, 404);
+
+      const updated = await storage.submitPromptResponse(id, response.trim());
+      return c.json({ status: "ok", task: updated });
+    } catch (error: any) {
+      return c.json({ error: error.message }, 500);
+    }
+  });
+
+  // POST /api/admin/queue/audit/:auditId/complete — process all responses through scoring pipeline
+  api.post("/admin/queue/audit/:auditId/complete", async (c) => {
+    try {
+      const auditId = parseInt(c.req.param("auditId"));
+      const audit = await storage.getAudit(auditId);
+      if (!audit) return c.json({ error: "Audit not found" }, 404);
+
+      const tasks = await storage.getPromptTasksByAudit(auditId);
+      const pending = tasks.filter(t => t.status === "pending");
+      if (pending.length > 0) {
+        return c.json({
+          error: `${pending.length} prompt(s) still pending. Submit all responses first.`,
+          pendingCount: pending.length,
+        }, 400);
+      }
+
+      // Build EngineResult objects from pasted responses
+      const brandName = audit.brandName;
+      const category = audit.category;
+      const engineResults: EngineResult[] = tasks.map(task => {
+        const { mentionsBrand, mentionedBrands } = extractBrands(task.response || "", brandName);
+        const sentiment = analyzeSentiment(task.response || "", brandName);
+        const citations = extractCitations(task.response || "");
+        return {
+          engine: task.engine.charAt(0).toUpperCase() + task.engine.slice(1), // capitalize to match engine names
+          model: `${task.engine}-manual`,
+          query: task.query,
+          response: task.response || "",
+          mentionsBrand,
+          mentionedBrands,
+          sentiment,
+          citations,
+          timestamp: (task.completedAt || task.createdAt)?.toISOString() || new Date().toISOString(),
+        };
+      });
+
+      // Run GEO audit on the brand URL
+      const url = audit.brandUrl;
+      const geoAudit = await runGeoAudit(url);
+
+      // Calculate scores
+      const customCompetitors = (audit.customCompetitors as string[]) || [];
+      const scores = calculateScores(brandName, category, engineResults, geoAudit, customCompetitors);
+
+      // Generate recommendations
+      const tier = audit.tier;
+      const recommendations = generateRecommendations(brandName, category, geoAudit, scores, tier);
+
+      // Build version metadata
+      const engineModels: Record<string, string> = {};
+      for (const task of tasks) {
+        const engineKey = task.engine.charAt(0).toUpperCase() + task.engine.slice(1);
+        engineModels[engineKey] = `${task.engine}-manual`;
+      }
+      const queries = (audit.generatedQueries as any[]) || [];
+      const uniqueEngines = new Set(tasks.map(t => t.engine));
+      const versionMetadata = buildVersionMetadata(
+        tier, engineModels, queries.length, uniqueEngines.size,
+        audit.language || "en", "manual" as any
+      );
+
+      // Store raw responses
+      const rawResponses = engineResults.map(r => ({
+        engine: r.engine,
+        model: r.model,
+        query: r.query,
+        response: r.response,
+        timestamp: r.timestamp,
+      }));
+
+      // Update the audit record with full results
+      const { getDb } = await import("./storage");
+      const db = getDb();
+      const { audits: auditsTable } = await import("@shared/schema");
+      const { eq: eqFn } = await import("drizzle-orm");
+      await db.update(auditsTable)
+        .set({
+          overallScore: scores.overall.score,
+          overallGrade: scores.overall.grade,
+          confidenceLow: scores.overall.confidenceLow,
+          confidenceHigh: scores.overall.confidenceHigh,
+          marginOfError: String(scores.overall.marginOfError),
+          observations: scores.overall.observations,
+          engineResults: {
+            perEngine: scores.perEngine,
+            dimensions: scores.dimensions,
+          },
+          competitors: scores.competitors,
+          queryResults: scores.queryDetails,
+          sentimentData: scores.sentimentBreakdown,
+          citationData: engineResults.flatMap(r => r.citations),
+          geoAudit,
+          recommendations,
+          rawResponses,
+          versionMetadata,
+        })
+        .where(eqFn(auditsTable.id, auditId));
+
+      logger.audit("manual_completed", {
+        auditId,
+        brand: brandName,
+        score: scores.overall.score,
+        grade: scores.overall.grade,
+        engines: uniqueEngines.size,
+        totalResponses: tasks.length,
+      });
+
+      return c.json({
+        status: "ok",
+        auditId,
+        brandName,
+        score: scores.overall.score,
+        grade: scores.overall.grade,
+        scores,
+        recommendations: recommendations.length,
+        message: `Audit completed! Score: ${scores.overall.score} (${scores.overall.grade}). View at /results/${auditId}`,
+      });
+    } catch (error: any) {
+      logger.error("manual_complete_error", { error: error.message, stack: error.stack?.slice(0, 300) });
       return c.json({ error: error.message }, 500);
     }
   });

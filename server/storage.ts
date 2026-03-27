@@ -1,4 +1,4 @@
-import { type Audit, type InsertAudit, type Lead, audits, leads, ipLimits } from "@shared/schema";
+import { type Audit, type InsertAudit, type Lead, type ManualPromptTask, type InsertManualPromptTask, audits, leads, ipLimits, manualPromptQueue } from "@shared/schema";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { eq, desc, and, sql, gt } from "drizzle-orm";
@@ -42,6 +42,13 @@ export interface IStorage {
   // IP rate limiting
   checkIpLimit(ip: string, maxPerWindow: number, windowMinutes: number): Promise<{ allowed: boolean; remaining: number }>;
   incrementIpCount(ip: string): Promise<void>;
+  // Manual prompt queue
+  createPromptTask(task: InsertManualPromptTask): Promise<ManualPromptTask>;
+  createPromptTasks(tasks: InsertManualPromptTask[]): Promise<ManualPromptTask[]>;
+  getPromptTasksByAudit(auditId: number): Promise<ManualPromptTask[]>;
+  getPendingPromptTasks(): Promise<ManualPromptTask[]>;
+  submitPromptResponse(id: number, response: string): Promise<ManualPromptTask | undefined>;
+  getPromptTask(id: number): Promise<ManualPromptTask | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -188,7 +195,7 @@ export class DatabaseStorage implements IStorage {
       .where(eq(ipLimits.ipAddress, ip))
       .orderBy(desc(ipLimits.windowStart))
       .limit(1);
-    
+
     if (existing) {
       await this.db.update(ipLimits)
         .set({ auditCount: existing.auditCount + 1 })
@@ -199,6 +206,44 @@ export class DatabaseStorage implements IStorage {
         auditCount: 1,
       });
     }
+  }
+
+  // ── Manual prompt queue ────────────────────────────────────
+  async createPromptTask(task: InsertManualPromptTask): Promise<ManualPromptTask> {
+    const [result] = await this.db.insert(manualPromptQueue).values(task).returning();
+    return result;
+  }
+
+  async createPromptTasks(tasks: InsertManualPromptTask[]): Promise<ManualPromptTask[]> {
+    if (tasks.length === 0) return [];
+    const results = await this.db.insert(manualPromptQueue).values(tasks).returning();
+    return results;
+  }
+
+  async getPromptTasksByAudit(auditId: number): Promise<ManualPromptTask[]> {
+    return this.db.select().from(manualPromptQueue)
+      .where(eq(manualPromptQueue.auditId, auditId))
+      .orderBy(manualPromptQueue.id);
+  }
+
+  async getPendingPromptTasks(): Promise<ManualPromptTask[]> {
+    return this.db.select().from(manualPromptQueue)
+      .orderBy(desc(manualPromptQueue.createdAt));
+  }
+
+  async submitPromptResponse(id: number, response: string): Promise<ManualPromptTask | undefined> {
+    const [result] = await this.db.update(manualPromptQueue)
+      .set({ response, status: "completed", completedAt: new Date() })
+      .where(eq(manualPromptQueue.id, id))
+      .returning();
+    return result;
+  }
+
+  async getPromptTask(id: number): Promise<ManualPromptTask | undefined> {
+    const [result] = await this.db.select().from(manualPromptQueue)
+      .where(eq(manualPromptQueue.id, id))
+      .limit(1);
+    return result;
   }
 }
 
@@ -232,4 +277,10 @@ export class LazyStorage implements IStorage {
   getLeadByEmail(email: string) { return this.inner.getLeadByEmail(email); }
   checkIpLimit(ip: string, maxPerWindow: number, windowMinutes: number) { return this.inner.checkIpLimit(ip, maxPerWindow, windowMinutes); }
   incrementIpCount(ip: string) { return this.inner.incrementIpCount(ip); }
+  createPromptTask(task: InsertManualPromptTask) { return this.inner.createPromptTask(task); }
+  createPromptTasks(tasks: InsertManualPromptTask[]) { return this.inner.createPromptTasks(tasks); }
+  getPromptTasksByAudit(auditId: number) { return this.inner.getPromptTasksByAudit(auditId); }
+  getPendingPromptTasks() { return this.inner.getPendingPromptTasks(); }
+  submitPromptResponse(id: number, response: string) { return this.inner.submitPromptResponse(id, response); }
+  getPromptTask(id: number) { return this.inner.getPromptTask(id); }
 }
