@@ -26,7 +26,7 @@ function getRedis(): Redis | null {
 // Perplexity Sonar: ~$1.00/$1.00 per 1M tokens
 // Claude 3.5 Haiku: $0.25/$1.25 per 1M tokens
 const PROVIDER_COST_CENTS: Record<string, number> = {
-  gemini: 0.025,     // gemini-2.0-flash: cheapest provider
+  gemini: 0.025,     // gemini-2.5-flash: cheapest provider
   grok: 0.0375,      // grok-3-mini: $0.25/1M in + $0.50/1M out
   chatgpt: 0.0375,   // gpt-4o-mini: $0.15/1M in + $0.60/1M out
   perplexity: 0.10,  // sonar: ~$1.00/1M in + $1.00/1M out

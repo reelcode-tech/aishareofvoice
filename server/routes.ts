@@ -541,14 +541,14 @@ export function createApiRoutes(storage: IStorage) {
         try {
           const key = process.env.GOOGLE_GEMINI_API_KEY;
           if (!key) { results.gemini = { error: "no key" }; return; }
-          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`, {
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: testPrompt }] }], generationConfig: { maxOutputTokens: 100 } }),
           });
           const data = await r.json() as any;
           if (!r.ok) { results.gemini = { error: data.error?.message || `HTTP ${r.status}`, status: r.status }; }
-          else { results.gemini = { ok: true, model: "gemini-2.0-flash", response: (data.candidates?.[0]?.content?.parts?.[0]?.text || "").slice(0, 200) }; }
+          else { results.gemini = { ok: true, model: "gemini-2.5-flash", response: (data.candidates?.[0]?.content?.parts?.[0]?.text || "").slice(0, 200) }; }
         } catch (e: any) { results.gemini = { error: e.message }; }
       })(),
       // Claude (Anthropic API format)

@@ -359,8 +359,8 @@ async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: st
   
   const start = Date.now();
   try {
-    const text = await callGemini(apiKey, "gemini-2.0-flash", query, systemPrompt, PROVIDER_TIMEOUTS.gemini);
-    logger.provider("success", { provider: "gemini", model: "gemini-2.0-flash", durationMs: Date.now() - start });
+    const text = await callGemini(apiKey, "gemini-2.5-flash", query, systemPrompt, PROVIDER_TIMEOUTS.gemini);
+    logger.provider("success", { provider: "gemini", model: "gemini-2.5-flash", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
     logger.provider("error", { provider: "gemini", error: error.message, durationMs: Date.now() - start });
@@ -448,7 +448,7 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
   // The 5 AI platforms brands care about showing up on:
   // Gemini, Grok, ChatGPT, Perplexity, Claude
   const engines: EngineConfig[] = [
-    { name: "Gemini", tier: "snapshot", queryFn: queryGeminiEngine, model: "gemini-2.0-flash" },
+    { name: "Gemini", tier: "snapshot", queryFn: queryGeminiEngine, model: "gemini-2.5-flash" },
     { name: "Grok", tier: "snapshot", queryFn: queryGrokEngine, model: "grok-3-mini" },
     { name: "ChatGPT", tier: "monitor", queryFn: queryChatGPTEngine, model: "gpt-4o-mini" },
     { name: "Perplexity", tier: "agency", queryFn: queryPerplexityEngine, model: "sonar" },
