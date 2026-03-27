@@ -256,7 +256,7 @@ Category must be a short, specific label like: skincare, mattresses, CRM softwar
           method: "POST",
           headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
           body: JSON.stringify({
-            model: "claude-3-5-haiku-latest", max_tokens: 128,
+            model: "claude-haiku-4-5", max_tokens: 128,
             system: systemMsg,
             messages: [{ role: "user", content: prompt }],
           }),

@@ -30,7 +30,7 @@ const PROVIDER_COST_CENTS: Record<string, number> = {
   grok: 0.0375,      // grok-3-mini: $0.25/1M in + $0.50/1M out
   chatgpt: 0.0375,   // gpt-4o-mini: $0.15/1M in + $0.60/1M out
   perplexity: 0.10,  // sonar: ~$1.00/1M in + $1.00/1M out
-  claude: 0.075,     // claude-3-5-haiku-latest: $0.25/1M in + $1.25/1M out
+  claude: 0.075,     // claude-haiku-4-5: $0.25/1M in + $1.25/1M out
 };
 
 // Per-tier estimated total cost (all queries × all engines)

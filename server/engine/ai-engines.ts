@@ -391,8 +391,8 @@ async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: st
 
   const start = Date.now();
   try {
-    const text = await callAnthropic(apiKey, "claude-3-5-haiku-latest", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
-    logger.provider("success", { provider: "claude", model: "claude-3-5-haiku-latest", durationMs: Date.now() - start });
+    const text = await callAnthropic(apiKey, "claude-haiku-4-5", query, systemPrompt, PROVIDER_TIMEOUTS.anthropic);
+    logger.provider("success", { provider: "claude", model: "claude-haiku-4-5", durationMs: Date.now() - start });
     return { response: text };
   } catch (error: any) {
     logger.provider("error", { provider: "claude", error: error.message, durationMs: Date.now() - start });
@@ -452,7 +452,7 @@ export function getEnginesForTier(tier: string): EngineConfig[] {
     { name: "Grok", tier: "snapshot", queryFn: queryGrokEngine, model: "grok-3-mini" },
     { name: "ChatGPT", tier: "monitor", queryFn: queryChatGPTEngine, model: "gpt-4o-mini" },
     { name: "Perplexity", tier: "agency", queryFn: queryPerplexityEngine, model: "sonar" },
-    { name: "Claude", tier: "agency", queryFn: queryClaudeEngine, model: "claude-3-5-haiku-latest" },
+    { name: "Claude", tier: "agency", queryFn: queryClaudeEngine, model: "claude-haiku-4-5" },
   ];
 
   const tierOrder = ["snapshot", "monitor", "agency"];
