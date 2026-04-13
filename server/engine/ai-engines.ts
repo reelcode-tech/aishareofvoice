@@ -345,15 +345,87 @@ async function callGemini(
 // ── Engine query functions (async cache + direct API) ───────────────
 
 // Mode and locale are set per-run by queryEnginesBatch — default to live/en
-let _currentMode: "live" | "benchmark" = "live";
+let _currentMode: "live" | "benchmark" | "test" = "live";
 let _currentLocale: string = "en";
+let _testMode: boolean = false;
 
-export function setRunContext(mode: "live" | "benchmark", locale: string) {
+export function setRunContext(mode: "live" | "benchmark" | "test", locale: string) {
   _currentMode = mode;
   _currentLocale = locale;
+  _testMode = mode === "test" || process.env.TEST_MODE === "true";
+}
+
+export function isTestMode(): boolean {
+  return _testMode || process.env.TEST_MODE === "true";
+}
+
+// ── Mock responses for test mode (no API calls) ─────────────────────
+
+const MOCK_BRANDS: Record<string, string[]> = {
+  crm: ["Salesforce", "HubSpot", "Zoho CRM", "Pipedrive", "Monday CRM"],
+  mattress: ["Casper", "Purple", "Tempur-Pedic", "Saatva", "Helix"],
+  skincare: ["CeraVe", "La Roche-Posay", "The Ordinary", "Neutrogena", "Cetaphil"],
+  coffee: ["Starbucks", "Peet's Coffee", "Blue Bottle", "Lavazza", "Illy"],
+  default: ["Acme Corp", "BrandX", "TopChoice", "ValuePick", "ProStar"],
+};
+
+function detectCategoryFromQuery(query: string): string {
+  const q = query.toLowerCase();
+  if (q.includes("crm") || q.includes("software") || q.includes("saas")) return "crm";
+  if (q.includes("mattress") || q.includes("sleep") || q.includes("bed")) return "mattress";
+  if (q.includes("skincare") || q.includes("skin") || q.includes("moisturizer")) return "skincare";
+  if (q.includes("coffee") || q.includes("espresso") || q.includes("café")) return "coffee";
+  return "default";
+}
+
+function getMockResponse(engineName: string, query: string, targetBrand?: string): string {
+  const cat = detectCategoryFromQuery(query);
+  const brands = [...MOCK_BRANDS[cat] || MOCK_BRANDS.default];
+
+  // Include the target brand ~60% of the time so brand detection has something to find
+  const includeTarget = targetBrand && Math.random() < 0.6;
+  if (includeTarget && targetBrand) {
+    brands[Math.floor(Math.random() * brands.length)] = targetBrand;
+  }
+
+  // Each engine gets a slightly different style
+  switch (engineName.toLowerCase()) {
+    case "gemini":
+      return `Here are some top options for "${query}":\n\n` +
+        brands.map((b, i) => `${i + 1}. **${b}** — ${includeTarget && b === targetBrand ? "A leading choice with excellent reviews and strong market presence." : "Known for quality and reliability in this space."}`).join("\n") +
+        `\n\nEach of these brands has unique strengths depending on your specific needs.`;
+
+    case "chatgpt":
+      return `Great question! When it comes to "${query}", several brands stand out:\n\n` +
+        brands.map((b, i) => `${i + 1}. **${b}**: ${includeTarget && b === targetBrand ? "Highly recommended — innovative features and great customer satisfaction." : "A solid option with competitive pricing and good performance."}`).join("\n") +
+        `\n\nI'd recommend evaluating each based on your priorities.`;
+
+    case "claude":
+      return `Based on my analysis of "${query}", here are the notable options:\n\n` +
+        brands.map((b, i) => `- **${b}**: ${includeTarget && b === targetBrand ? "Stands out for its comprehensive approach and strong reputation." : "Offers a well-rounded solution for most needs."}`).join("\n") +
+        `\n\nThe best choice depends on your specific requirements and budget.`;
+
+    case "grok":
+      return `Alright, let's break down "${query}"! Here's what's hot:\n\n` +
+        brands.map((b, i) => `${i + 1}. **${b}** — ${includeTarget && b === targetBrand ? "This one's a fan favorite and for good reason. Top-tier quality." : "Solid pick. Gets the job done well."}`).join("\n") +
+        `\n\nHonestly, you can't go wrong with any of these.`;
+
+    case "perplexity":
+      return `According to recent reviews and expert analysis on "${query}":\n\n` +
+        brands.map((b, i) => `${i + 1}. **${b}** — ${includeTarget && b === targetBrand ? "Frequently cited as an industry leader with strong user ratings [1]." : "Well-regarded in the market with consistent positive reviews [" + (i + 1) + "]."}`).join("\n") +
+        `\n\nSources:\n[1] https://example.com/reviews\n[2] https://example.com/best-picks`;
+
+    default:
+      return `Top picks for "${query}": ` +
+        brands.map(b => `**${b}**`).join(", ") + ".";
+  }
 }
 
 async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  if (isTestMode()) {
+    logger.info("test_mode", { provider: "gemini", query: query.slice(0, 80) });
+    return { response: getMockResponse("gemini", query) };
+  }
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "gemini" }); return { response: "" }; }
   
@@ -369,6 +441,10 @@ async function queryGeminiEngine(query: string, systemPrompt?: string, tier?: st
 }
 
 async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  if (isTestMode()) {
+    logger.info("test_mode", { provider: "chatgpt", query: query.slice(0, 80) });
+    return { response: getMockResponse("chatgpt", query) };
+  }
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "chatgpt" }); return { response: "" }; }
   
@@ -386,6 +462,10 @@ async function queryChatGPTEngine(query: string, systemPrompt?: string, tier?: s
 }
 
 async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  if (isTestMode()) {
+    logger.info("test_mode", { provider: "claude", query: query.slice(0, 80) });
+    return { response: getMockResponse("claude", query) };
+  }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "claude" }); return { response: "" }; }
 
@@ -401,6 +481,10 @@ async function queryClaudeEngine(query: string, systemPrompt?: string, tier?: st
 }
 
 async function queryGrokEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  if (isTestMode()) {
+    logger.info("test_mode", { provider: "grok", query: query.slice(0, 80) });
+    return { response: getMockResponse("grok", query) };
+  }
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "grok" }); return { response: "" }; }
 
@@ -418,6 +502,10 @@ async function queryGrokEngine(query: string, systemPrompt?: string, tier?: stri
 }
 
 async function queryPerplexityEngine(query: string, systemPrompt?: string, tier?: string): Promise<{ response: string }> {
+  if (isTestMode()) {
+    logger.info("test_mode", { provider: "perplexity", query: query.slice(0, 80) });
+    return { response: getMockResponse("perplexity", query) };
+  }
   const apiKey = process.env.PERPLEXITY_API_KEY;
   if (!apiKey) { logger.warn("no_api_key", { provider: "perplexity" }); return { response: "" }; }
   
@@ -502,7 +590,7 @@ export async function queryEnginesBatch(
   targetBrand: string,
   category: string = "general",
   tier: string = "snapshot",
-  mode: "live" | "benchmark" = "live",
+  mode: "live" | "benchmark" | "test" = "live",
   locale: string = "en",
 ): Promise<EngineResult[]> {
   // Gap 1: Set run context for cache behavior

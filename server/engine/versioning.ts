@@ -42,7 +42,7 @@ export function buildVersionMetadata(
   queryCount: number,
   engineCount: number,
   locale: string = "en",
-  mode: "live" | "benchmark" = "live",
+  mode: "live" | "benchmark" | "test" = "live",
 ): AuditVersionMetadata {
   return {
     versions: { ...ASOV_VERSIONS },
@@ -64,7 +64,7 @@ export interface AuditVersionMetadata {
   versions: VersionSnapshot;
   runtime: {
     tier: string;
-    mode: "live" | "benchmark";
+    mode: "live" | "benchmark" | "test";
     locale: string;
     queryCount: number;
     engineCount: number;

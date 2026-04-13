@@ -20,7 +20,7 @@ export interface AuditResult {
   brandUrl: string;
   category: string;
   tier: string;
-  mode: "live" | "benchmark";
+  mode: "live" | "benchmark" | "test";
   language: string;
   scores: ScoringResult;
   geoAudit: GeoAuditResult;
@@ -182,7 +182,7 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
     engineModels[e.name] = e.model;
   }
   const versionMetadata = buildVersionMetadata(
-    tier, engineModels, queries.length, engines.length, language, mode as "live" | "benchmark"
+    tier, engineModels, queries.length, engines.length, language, mode as "live" | "benchmark" | "test"
   );
   
   // Build enriched metadata
@@ -233,7 +233,7 @@ export async function runAudit(request: AuditRequest): Promise<AuditResult> {
     brandUrl: url,
     category,
     tier,
-    mode: mode as "live" | "benchmark",
+    mode: mode as "live" | "benchmark" | "test",
     language,
     scores,
     geoAudit,
