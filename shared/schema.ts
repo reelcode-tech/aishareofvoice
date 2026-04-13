@@ -66,7 +66,7 @@ export const auditRequestSchema = z.object({
   brandName: z.string().optional(),
   category: z.string().optional(),
   tier: z.enum(["snapshot", "monitor", "agency"]).default("snapshot"),
-  mode: z.enum(["live", "benchmark"]).default("live"), // Gap 1: live vs benchmark mode
+  mode: z.enum(["live", "benchmark", "test", "manual"]).default("live"), // Gap 1: live vs benchmark mode
   email: z.string().email().optional(),
   language: z.string().min(2).max(10).default("en"), // Gap 22: tighter locale validation
   customCompetitors: z
@@ -76,3 +76,19 @@ export const auditRequestSchema = z.object({
 });
 
 export type AuditRequest = z.infer<typeof auditRequestSchema>;
+
+// Manual paste queue — for testing with subscription accounts (zero API cost)
+export const manualPromptQueue = pgTable("manual_prompt_queue", {
+  id: serial("id").primaryKey(),
+  auditId: integer("audit_id").notNull(),
+  engine: text("engine").notNull(), // gemini | chatgpt | claude | grok | perplexity
+  query: text("query").notNull(),
+  systemPrompt: text("system_prompt").notNull(),
+  status: text("status").notNull().default("pending"), // pending | completed
+  response: text("response"), // pasted response from subscription
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export type ManualPromptTask = typeof manualPromptQueue.$inferSelect;
+export type InsertManualPromptTask = typeof manualPromptQueue.$inferInsert;

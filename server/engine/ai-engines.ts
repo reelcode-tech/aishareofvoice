@@ -131,7 +131,7 @@ function isLikelyBrand(candidate: string): boolean {
 
 // ── Brand extraction & analysis (unchanged) ─────────────────────────
 
-function extractBrands(response: string, targetBrand: string): {
+export function extractBrands(response: string, targetBrand: string): {
   mentionsBrand: boolean;
   mentionedBrands: string[];
 } {
@@ -172,7 +172,7 @@ function extractBrands(response: string, targetBrand: string): {
   return { mentionsBrand, mentionedBrands: Array.from(mentionedBrands) };
 }
 
-function analyzeSentiment(response: string, brand: string): "positive" | "neutral" | "negative" | "not_mentioned" {
+export function analyzeSentiment(response: string, brand: string): "positive" | "neutral" | "negative" | "not_mentioned" {
   const text = response.toLowerCase();
   const brandLower = brand.toLowerCase();
   if (!text.includes(brandLower)) return "not_mentioned";
@@ -195,13 +195,13 @@ function analyzeSentiment(response: string, brand: string): "positive" | "neutra
   return "neutral";
 }
 
-function extractCitations(response: string): string[] {
+export function extractCitations(response: string): string[] {
   const urlPattern = /https?:\/\/[^\s\)]+/g;
   const matches = response.match(urlPattern) || [];
   return [...new Set(matches)];
 }
 
-function getBrandExtractionSystemPrompt(category: string): string {
+export function getBrandExtractionSystemPrompt(category: string): string {
   return `You are a consumer research assistant. When answering questions about products or services, always:
 
 1. Name specific BRANDS (company/product names) — never generic terms like "moisturizer", "platform", or ingredient names.
