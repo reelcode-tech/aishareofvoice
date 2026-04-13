@@ -953,6 +953,33 @@ export function createApiRoutes(storage: IStorage) {
     }
   });
 
+  // One-time: create manual_prompt_queue table if it doesn't exist
+  api.post("/admin/setup-queue-table", async (c) => {
+    try {
+      const { getDb } = await import("./storage");
+      const db = getDb();
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS manual_prompt_queue (
+          id SERIAL PRIMARY KEY,
+          audit_id INTEGER NOT NULL,
+          engine TEXT NOT NULL,
+          query TEXT NOT NULL,
+          system_prompt TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          response TEXT,
+          created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+          completed_at TIMESTAMP
+        )
+      `);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_mpq_audit_id ON manual_prompt_queue(audit_id)`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_mpq_status ON manual_prompt_queue(status)`);
+      return c.json({ status: "ok", message: "manual_prompt_queue table created" });
+    } catch (error: any) {
+      return c.json({ error: error.message }, 500);
+    }
+  });
+
   // Serve admin queue HTML page
   api.get("/admin/queue/page", async (c) => {
     return c.html(getAdminQueueHtml());
